@@ -1,6 +1,6 @@
 # Evaluation report
 
-Generated: 2026-10-24 23:21
+Generated: 2026-10-25 09:30
 
 ## Retrieval accuracy
 
@@ -10,7 +10,7 @@ Generated: 2026-10-24 23:21
 | 3 | 0.931 | 0.322 | 0.931 |
 | 5 | 0.931 | 0.193 | 0.931 |
 
-Mean reciprocal rank: 0.897
+Mean reciprocal rank: 0.891
 
 Questions with a relevant chunk missing from the top results:
 - Where is the garage located?
@@ -20,9 +20,9 @@ Questions with a relevant chunk missing from the top results:
 
 | Stage | Requests | Mean | p50 | p95 | Max |
 |---|---|---|---|---|---|
-| Retrieval (vector search) | 29 | 6.3 | 5.6 | 7.2 | 23.0 |
-| Guard rails (input check) | 32 | 4.8 | 1.4 | 13.2 | 73.3 |
-| End to end (LLM answer) | 29 | 2216.2 | 2160.8 | 2808.9 | 2998.7 |
+| Retrieval (vector search) | 29 | 5.9 | 5.6 | 6.9 | 11.8 |
+| Guard rails (input check) | 32 | 4.7 | 1.4 | 10.1 | 75.2 |
+| End to end (LLM answer) | 29 | 1982.2 | 1952.2 | 2424.1 | 2499.6 |
 
 ## Data protection
 

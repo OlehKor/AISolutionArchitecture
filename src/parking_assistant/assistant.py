@@ -1,7 +1,8 @@
+import operator
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Annotated, TypedDict
+from typing import Annotated, Protocol, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -9,8 +10,20 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from parking_assistant.approval import (
+    AdminDeliveryError,
+    render_decision_notice,
+    render_saved_without_delivery,
+    render_status,
+    render_submitted,
+)
 from parking_assistant.conversation import ConversationModel
-from parking_assistant.database import NoAvailabilityError, ParkingDatabase
+from parking_assistant.database import (
+    PENDING,
+    NoAvailabilityError,
+    ParkingDatabase,
+    Reservation,
+)
 from parking_assistant.guardrails import REFUSALS, Guardrails
 from parking_assistant.knowledge import KnowledgeSearch, Passage
 from parking_assistant.live_data import format_live_data
@@ -20,7 +33,6 @@ from parking_assistant.reservation import (
     Step,
     advance,
     is_started,
-    render_booked,
     render_cancelled,
     render_pending_prompt,
     render_question,
@@ -30,6 +42,7 @@ from parking_assistant.reservation import (
 )
 
 BLOCKED = "blocked"
+STATUS = "status"
 EMPTY_DRAFT = ReservationDraft()
 STATE_TYPES = (
     ("parking_assistant.reservation", "ReservationDraft"),
@@ -46,6 +59,14 @@ class ChatState(TypedDict, total=False):
     passages: list[Passage]
     live_data: str
     reply: str
+    submitted: str
+    references: Annotated[list[str], operator.add]
+
+
+class AdministratorGateway(Protocol):
+    """How the first agent hands a reservation request over to the second agent."""
+
+    def request_approval(self, reservation: Reservation) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -54,6 +75,7 @@ class Dependencies:
     knowledge: KnowledgeSearch
     database: ParkingDatabase
     guardrails: Guardrails
+    administrator: AdministratorGateway
     clock: Callable[[], datetime]
     new_reference: Callable[[], str]
     history_messages: int
@@ -84,7 +106,12 @@ def build_graph(deps: Dependencies) -> StateGraph:
         verdict = deps.guardrails.check_input(state["user_text"])
         if not verdict.allowed:
             return {"intent": BLOCKED, "reply": REFUSALS[verdict.reason]}
-        return {"messages": [HumanMessage(verdict.text)], "intent": "", "reply": ""}
+        return {
+            "messages": [HumanMessage(verdict.text)],
+            "intent": "",
+            "reply": "",
+            "submitted": "",
+        }
 
     def classify(state: ChatState) -> dict:
         route = deps.model.classify(
@@ -126,13 +153,36 @@ def build_graph(deps: Dependencies) -> StateGraph:
         except NoAvailabilityError:
             retry = replace(outcome.draft, start="", end="", awaiting_confirmation=False)
             return {"draft": retry, "reply": render_unavailable(outcome.draft)}
-        return {"draft": EMPTY_DRAFT, "reply": render_booked(reservation.reference)}
+        return {
+            "draft": EMPTY_DRAFT,
+            "reply": render_submitted(reservation.reference),
+            "submitted": reservation.reference,
+            "references": [reservation.reference],
+        }
+
+    def escalate(state: ChatState) -> dict:
+        reservation = deps.database.get_reservation(state["submitted"])
+        try:
+            deps.administrator.request_approval(reservation)
+        except AdminDeliveryError:
+            return {"reply": render_saved_without_delivery(reservation.reference)}
+        return {}
+
+    def report_status(state: ChatState) -> dict:
+        reservations = deps.database.reservations(state.get("references", []))
+        deps.database.mark_notified([r.reference for r in reservations if r.status != PENDING])
+        return {"reply": render_status(reservations)}
 
     def cancel(state: ChatState) -> dict:
         return {"draft": EMPTY_DRAFT, "reply": render_cancelled()}
 
     def finalize(state: ChatState) -> dict:
-        safe_reply = deps.guardrails.sanitize_output(state["reply"]).text
+        reply = state["reply"]
+        if state["intent"] not in (BLOCKED, STATUS):
+            decided = deps.database.unreported_decisions(state.get("references", []))
+            deps.database.mark_notified([r.reference for r in decided])
+            reply = "\n\n".join([*(render_decision_notice(r) for r in decided), reply])
+        safe_reply = deps.guardrails.sanitize_output(reply).text
         if state["intent"] == BLOCKED:
             return {"reply": safe_reply}
         return {"reply": safe_reply, "messages": [AIMessage(safe_reply)]}
@@ -144,6 +194,8 @@ def build_graph(deps: Dependencies) -> StateGraph:
     graph.add_node("answer", answer)
     graph.add_node("reserve", reserve)
     graph.add_node("cancel", cancel)
+    graph.add_node("escalate", escalate)
+    graph.add_node("report_status", report_status)
     graph.add_node("finalize", finalize)
 
     graph.add_edge(START, "screen_input")
@@ -155,10 +207,21 @@ def build_graph(deps: Dependencies) -> StateGraph:
     graph.add_conditional_edges(
         "classify",
         lambda state: state["intent"],
-        {"info": "retrieve", "other": "retrieve", "reserve": "reserve", "cancel": "cancel"},
+        {
+            "info": "retrieve",
+            "other": "retrieve",
+            "reserve": "reserve",
+            "cancel": "cancel",
+            "status": "report_status",
+        },
     )
     graph.add_edge("retrieve", "answer")
-    for node in ("answer", "reserve", "cancel"):
+    graph.add_conditional_edges(
+        "reserve",
+        lambda state: "escalate" if state["submitted"] else "finalize",
+        {"escalate": "escalate", "finalize": "finalize"},
+    )
+    for node in ("answer", "cancel", "escalate", "report_status"):
         graph.add_edge(node, "finalize")
     graph.add_edge("finalize", END)
     return graph

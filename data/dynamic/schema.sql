@@ -15,13 +15,19 @@ CREATE TABLE IF NOT EXISTS zones (
 );
 
 CREATE TABLE IF NOT EXISTS reservations (
-    reference   TEXT PRIMARY KEY,
-    first_name  TEXT NOT NULL,
-    last_name   TEXT NOT NULL,
-    car_number  TEXT NOT NULL,
-    start_time  TEXT NOT NULL,
-    end_time    TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    reference          TEXT PRIMARY KEY,
+    first_name         TEXT NOT NULL,
+    last_name          TEXT NOT NULL,
+    car_number         TEXT NOT NULL,
+    start_time         TEXT NOT NULL,
+    end_time           TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'confirmed', 'rejected')),
+    admin_comment      TEXT NOT NULL DEFAULT '',
+    request_message_id INTEGER,
+    customer_notified  INTEGER NOT NULL DEFAULT 0,
+    created_at         TEXT NOT NULL,
+    decided_at         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_reservations_period ON reservations (start_time, end_time);

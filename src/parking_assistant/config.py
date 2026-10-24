@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -34,10 +34,18 @@ class Settings(BaseSettings):
     chunk_overlap: int = 80
     history_messages: int = 6
 
+    telegram_bot_token: SecretStr = SecretStr("")
+    telegram_admin_chat_id: int = 0
+    telegram_poll_seconds: int = 30
+
     public_contacts: tuple[str, ...] = Field(
         default=("+370 5 210 4455", "info@skypark-central.com"),
         description="Contact details that are allowed to appear in answers.",
     )
+
+    @property
+    def telegram_configured(self) -> bool:
+        return bool(self.telegram_bot_token.get_secret_value()) and self.telegram_admin_chat_id != 0
 
 
 @lru_cache

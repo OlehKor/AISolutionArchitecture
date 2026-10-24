@@ -13,7 +13,6 @@ from parking_assistant.reservation import (
     normalize_car_number,
     normalize_name,
     period_problem,
-    render_booked,
     render_question,
     render_summary,
 )
@@ -119,9 +118,8 @@ def test_advance_never_books_when_details_change_together_with_yes():
     assert outcome.step is Step.CONFIRM
 
 
-def test_summary_and_booked_messages_show_the_details():
+def test_summary_message_shows_the_details():
     summary = render_summary(COMPLETE)
     assert "Anna Kowalska" in summary
     assert "ABC123" in summary
     assert "25 Oct 2026, 09:00" in summary
-    assert "PK-1A2B3C" in render_booked("PK-1A2B3C")

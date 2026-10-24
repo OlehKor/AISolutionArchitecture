@@ -1,3 +1,5 @@
+from pydantic import SecretStr
+
 from parking_assistant.config import Settings
 
 
@@ -19,3 +21,19 @@ def test_environment_overrides_defaults(monkeypatch):
 
     assert settings.retrieval_k == 7
     assert settings.chat_model == "gpt-4o"
+
+
+def test_telegram_is_configured_only_with_token_and_chat_id():
+    assert not Settings(
+        telegram_bot_token=SecretStr(""), telegram_admin_chat_id=0
+    ).telegram_configured
+    assert not Settings(
+        telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=0
+    ).telegram_configured
+    assert Settings(
+        telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=42
+    ).telegram_configured
+
+
+def test_bot_token_is_hidden_when_settings_are_printed():
+    assert "123:abc" not in repr(Settings(telegram_bot_token=SecretStr("123:abc")))

@@ -1,6 +1,14 @@
-from fakes import NOW, MaskingRedactor, ScriptedModel, StaticKnowledge, slot_updates
+from fakes import (
+    NOW,
+    MaskingRedactor,
+    RecordingAdministrator,
+    ScriptedModel,
+    StaticKnowledge,
+    slot_updates,
+)
 from parking_assistant.assistant import Dependencies, ParkingAssistant
 from parking_assistant.conversation import Route
+from parking_assistant.database import CONFIRMED, REJECTED
 from parking_assistant.guardrails import PROMPT_INJECTION, REFUSALS, Guardrails
 from parking_assistant.knowledge import Passage
 
@@ -8,6 +16,7 @@ INFO = Route(intent="info", needs_live_data=False)
 INFO_LIVE = Route(intent="info", needs_live_data=True)
 RESERVE = Route(intent="reserve", needs_live_data=False)
 CANCEL = Route(intent="cancel", needs_live_data=False)
+STATUS = Route(intent="status", needs_live_data=False)
 DETAILS = {
     "first_name": "Anna",
     "last_name": "Kowalska",
@@ -18,18 +27,33 @@ DETAILS = {
 PASSAGE = Passage("faq#overnight", "faq", "overnight", "Overnight parking is allowed.", 0.1)
 
 
-def make_assistant(model, database, redactor=None, knowledge=None) -> ParkingAssistant:
+def make_assistant(
+    model, database, redactor=None, knowledge=None, administrator=None
+) -> ParkingAssistant:
     return ParkingAssistant(
         Dependencies(
             model=model,
             knowledge=knowledge or StaticKnowledge([PASSAGE]),
             database=database,
             guardrails=Guardrails(redactor or MaskingRedactor()),
+            administrator=administrator or RecordingAdministrator(),
             clock=lambda: NOW,
             new_reference=lambda: "PK-TEST01",
             history_messages=6,
         )
     )
+
+
+def book_a_space(assistant, session_id="s1") -> str:
+    assistant.reply(session_id, "I want to book a space")
+    assistant.reply(session_id, "Anna Kowalska, ABC123, tomorrow 9:00 to 17:30")
+    return assistant.reply(session_id, "yes")
+
+
+BOOKING_MODEL_ARGS = (
+    [RESERVE, RESERVE, RESERVE],
+    [slot_updates(), slot_updates(**DETAILS), slot_updates(confirmation="yes")],
+)
 
 
 def test_info_question_is_answered_from_retrieved_passages_and_live_data(database):
@@ -81,26 +105,98 @@ def test_answers_are_sanitized_before_they_are_returned(database):
     assert assistant.reply("s1", "hello") == "The code is [REDACTED]."
 
 
-def test_reservation_is_collected_confirmed_and_stored(database):
-    model = ScriptedModel(
-        [RESERVE, RESERVE, RESERVE],
-        [slot_updates(), slot_updates(**DETAILS), slot_updates(confirmation="yes")],
-    )
-    assistant = make_assistant(model, database)
+def test_reservation_is_collected_confirmed_and_sent_to_the_administrator(database):
+    model = ScriptedModel(*BOOKING_MODEL_ARGS)
+    administrator = RecordingAdministrator()
+    assistant = make_assistant(model, database, administrator=administrator)
 
     first = assistant.reply("s1", "I want to book a space")
     summary = assistant.reply("s1", "Anna Kowalska, ABC123, tomorrow 9:00 to 17:30")
-    booked = assistant.reply("s1", "yes")
+    submitted = assistant.reply("s1", "yes")
 
     assert "first name" in first
     assert "Please check your reservation" in summary
-    assert "PK-TEST01" in booked
+    assert "PK-TEST01" in submitted
+    assert "sent to our administrator" in submitted
     stored = database.get_reservation("PK-TEST01")
-    assert (stored.first_name, stored.car_number, stored.start_time) == (
+    assert (stored.first_name, stored.car_number, stored.start_time, stored.status) == (
         "Anna",
         "ABC123",
         "2026-10-25T09:00",
+        "pending",
     )
+    assert [r.reference for r in administrator.requests] == ["PK-TEST01"]
+
+
+def test_reservation_stays_pending_when_the_administrator_is_unreachable(database):
+    model = ScriptedModel(*BOOKING_MODEL_ARGS)
+    assistant = make_assistant(
+        model, database, administrator=RecordingAdministrator(unreachable=True)
+    )
+
+    reply = book_a_space(assistant)
+
+    assert "could not reach the administrator" in reply
+    assert database.get_reservation("PK-TEST01").status == "pending"
+
+
+def test_confirmation_is_announced_once_on_the_next_message(database):
+    model = ScriptedModel([*BOOKING_MODEL_ARGS[0], INFO, INFO], BOOKING_MODEL_ARGS[1])
+    assistant = make_assistant(model, database)
+    book_a_space(assistant)
+    database.decide("PK-TEST01", CONFIRMED, "", NOW)
+
+    first = assistant.reply("s1", "Where are you?")
+    second = assistant.reply("s1", "Thanks")
+
+    assert first.startswith("Good news: reservation PK-TEST01")
+    assert first.endswith("scripted answer")
+    assert second == "scripted answer"
+
+
+def test_rejection_reason_is_passed_on_to_the_customer(database):
+    model = ScriptedModel([*BOOKING_MODEL_ARGS[0], INFO], BOOKING_MODEL_ARGS[1])
+    assistant = make_assistant(model, database)
+    book_a_space(assistant)
+    database.decide("PK-TEST01", REJECTED, "closed for maintenance", NOW)
+
+    reply = assistant.reply("s1", "Hello")
+
+    assert "declined" in reply
+    assert "closed for maintenance" in reply
+
+
+def test_status_question_reports_pending_and_decided_requests(database):
+    model = ScriptedModel([*BOOKING_MODEL_ARGS[0], STATUS, STATUS, INFO], BOOKING_MODEL_ARGS[1])
+    assistant = make_assistant(model, database)
+    book_a_space(assistant)
+
+    waiting = assistant.reply("s1", "Is my booking confirmed?")
+    database.decide("PK-TEST01", CONFIRMED, "", NOW)
+    decided = assistant.reply("s1", "And now?")
+    later = assistant.reply("s1", "Thanks")
+
+    assert "waiting for the administrator" in waiting
+    assert "PK-TEST01" in decided
+    assert "confirmed" in decided
+    assert "Good news" not in later
+
+
+def test_status_question_without_requests_says_so(database):
+    model = ScriptedModel([STATUS])
+
+    reply = make_assistant(model, database).reply("s1", "What about my booking?")
+
+    assert "no reservation requests" in reply
+
+
+def test_decisions_are_only_announced_to_the_customer_who_made_the_request(database):
+    model = ScriptedModel([*BOOKING_MODEL_ARGS[0], INFO], BOOKING_MODEL_ARGS[1])
+    assistant = make_assistant(model, database)
+    book_a_space(assistant, "owner")
+    database.decide("PK-TEST01", CONFIRMED, "", NOW)
+
+    assert assistant.reply("stranger", "Hello") == "scripted answer"
 
 
 def test_info_question_during_reservation_returns_to_the_pending_question(database):

@@ -1,7 +1,7 @@
 # Booking Process
 
 ## How to reserve a space
-Reservations are made through this assistant. Tell the assistant that you would like to reserve a parking space and it will guide you step by step. When all details are collected, the assistant shows a summary and asks you to confirm it before the reservation is registered.
+Reservations are made through this assistant. Tell the assistant that you would like to reserve a parking space and it will guide you step by step. When all details are collected, the assistant shows a summary and asks you to confirm it before the request is sent to our administrator.
 
 ## Information required for a reservation
 To reserve a parking space we need the following details:
@@ -16,7 +16,7 @@ We do not ask for payment card details in the chat. Please never type card numbe
 A space can be reserved at most 90 days ahead and for a maximum stay of 30 days. The arrival and departure must be in the future.
 
 ## Reservation confirmation
-After you confirm the summary, your reservation is registered and you receive a reservation reference. The reserved space is held for you from the arrival time until the departure time.
+After you confirm the summary, your request is registered with the status pending and you receive a reservation reference. Every request is reviewed by our administrator, who confirms or declines it. You are told the decision in this chat, and you can ask the assistant for the status of your request at any time. A space is held for you from the arrival time until the departure time only after the administrator has confirmed the reservation.
 
 ## Changes and cancellations
 You can cancel or change a reservation free of charge up to 2 hours before the arrival time. Later cancellations are treated as a no-show, and the first hour is charged at the standard hourly rate. To change a reservation, contact customer support with your reservation reference.

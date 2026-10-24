@@ -1,6 +1,10 @@
 import re
 
-from parking_assistant.composition import new_reservation_reference
+from pydantic import SecretStr
+
+from parking_assistant.composition import build_admin_channel, new_reservation_reference
+from parking_assistant.config import Settings
+from parking_assistant.telegram import TelegramChannel, UnconfiguredChannel
 
 
 def test_reservation_references_have_a_readable_format():
@@ -9,3 +13,17 @@ def test_reservation_references_have_a_readable_format():
 
 def test_reservation_references_are_not_repeated():
     assert len({new_reservation_reference() for _ in range(50)}) == 50
+
+
+def test_without_telegram_settings_requests_go_nowhere():
+    channel = build_admin_channel(
+        Settings(telegram_bot_token=SecretStr(""), telegram_admin_chat_id=0)
+    )
+
+    assert isinstance(channel, UnconfiguredChannel)
+
+
+def test_telegram_settings_build_the_telegram_channel():
+    settings = Settings(telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=42)
+
+    assert isinstance(build_admin_channel(settings), TelegramChannel)

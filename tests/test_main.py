@@ -1,6 +1,11 @@
 import pytest
+from pydantic import SecretStr
 
 from parking_assistant import __main__ as cli
+from parking_assistant.config import Settings
+
+UNCONFIGURED = Settings(telegram_bot_token=SecretStr(""), telegram_admin_chat_id=0)
+CONFIGURED = Settings(telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=42)
 
 
 class RecordingAssistant:
@@ -31,7 +36,7 @@ def test_chat_loop_skips_blank_lines_and_stops_on_exit(monkeypatch, capsys):
     typed = iter(["hello", "   ", "exit", "never reached"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(typed))
 
-    cli.chat(settings=None)
+    cli.chat(UNCONFIGURED)
 
     assert assistant.messages == ["hello"]
     assert "Assistant: echo: hello" in capsys.readouterr().out
@@ -46,6 +51,36 @@ def test_chat_loop_ends_on_end_of_input(monkeypatch):
 
     monkeypatch.setattr("builtins.input", end_of_input)
 
-    cli.chat(settings=None)
+    cli.chat(UNCONFIGURED)
 
     assert assistant.messages == []
+
+
+def test_cli_parses_the_admin_command():
+    assert cli.parse_args(["admin"]).command == "admin"
+
+
+def test_admin_command_refuses_to_start_without_telegram_settings():
+    with pytest.raises(SystemExit) as stopped:
+        cli.admin(UNCONFIGURED)
+
+    assert "PARKING_TELEGRAM_BOT_TOKEN" in str(stopped.value)
+
+
+def test_admin_command_resends_unsent_requests_and_then_serves(monkeypatch):
+    calls: list[str] = []
+
+    class FakeAgent:
+        def resend_unsent(self) -> int:
+            calls.append("resend")
+            return 2
+
+        def serve(self) -> None:
+            calls.append("serve")
+
+    monkeypatch.setattr(cli, "build_database", lambda settings: object())
+    monkeypatch.setattr(cli, "build_administrator", lambda settings, database: FakeAgent())
+
+    cli.admin(CONFIGURED)
+
+    assert calls == ["resend", "serve"]

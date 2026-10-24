@@ -174,7 +174,7 @@ def advance(draft: ReservationDraft, updates: SlotUpdates, now: datetime) -> Out
     return Outcome(replace(updated, awaiting_confirmation=True), Step.CONFIRM, problems)
 
 
-def _display(value: str) -> str:
+def display_time(value: str) -> str:
     return parse_time(value).strftime(DISPLAY_FORMAT)
 
 
@@ -196,8 +196,8 @@ def render_summary(draft: ReservationDraft, problems: tuple[str, ...] = ()) -> s
         "Please check your reservation:\n"
         f"- Name: {draft.first_name} {draft.last_name}\n"
         f"- Car number: {draft.car_number}\n"
-        f"- Arrival: {_display(draft.start)}\n"
-        f"- Departure: {_display(draft.end)}\n"
+        f"- Arrival: {display_time(draft.start)}\n"
+        f"- Departure: {display_time(draft.end)}\n"
         "Shall I submit it? (yes / no)"
     )
     return _with_problems(problems, summary)
@@ -207,14 +207,10 @@ def render_revision_request() -> str:
     return "No problem. What would you like to change?"
 
 
-def render_booked(reference: str) -> str:
-    return f"Your reservation is registered with reference {reference}. Thank you!"
-
-
 def render_unavailable(draft: ReservationDraft) -> str:
     return (
-        f"Sorry, there are no reservable spaces for {_display(draft.start)} - "
-        f"{_display(draft.end)}. Please give me a different period."
+        f"Sorry, there are no reservable spaces for {display_time(draft.start)} - "
+        f"{display_time(draft.end)}. Please give me a different period."
     )
 
 
