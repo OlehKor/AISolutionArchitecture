@@ -44,8 +44,12 @@ class Settings(BaseSettings):
     )
 
     @property
+    def telegram_token_set(self) -> bool:
+        return bool(self.telegram_bot_token.get_secret_value())
+
+    @property
     def telegram_configured(self) -> bool:
-        return bool(self.telegram_bot_token.get_secret_value()) and self.telegram_admin_chat_id != 0
+        return self.telegram_token_set and self.telegram_admin_chat_id != 0
 
 
 @lru_cache

@@ -50,7 +50,7 @@ Embeddings run locally with FastEmbed, so only the chat model needs an API key.
 
 1. In Telegram, talk to `@BotFather`, run `/newbot` and copy the token.
 2. Put the token in `.env` as `PARKING_TELEGRAM_BOT_TOKEN` (never commit it).
-3. Run `parking-assistant admin`, then send any message to your bot. The log shows `Ignored a message from unauthorized chat <id>`; put that id in `.env` as `PARKING_TELEGRAM_ADMIN_CHAT_ID` and restart the command.
+3. Run `parking-assistant admin` and send any message to your bot. Without a chat id the command only runs in setup mode: it prints your chat id and exits. Put that id in `.env` as `PARKING_TELEGRAM_ADMIN_CHAT_ID`, then run `parking-assistant admin` again to start listening.
 
 Only the configured chat can decide; messages from other chats are ignored. Without Telegram settings the chat still works, but reservations stay `pending`.
 

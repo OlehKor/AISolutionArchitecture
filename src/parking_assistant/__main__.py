@@ -7,7 +7,9 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 
+from parking_assistant.approval import AdminDeliveryError
 from parking_assistant.composition import (
+    build_admin_channel,
     build_administrator,
     build_assistant,
     build_database,
@@ -48,9 +50,24 @@ def chat(settings: Settings) -> None:
             print(f"Assistant: {assistant.reply(session_id, text)}")
 
 
+def discover_chat_id(settings: Settings) -> None:
+    channel = build_admin_channel(settings)
+    print("Send any message to your bot in Telegram now (Ctrl+C to cancel)...")
+    try:
+        while not (messages := channel.poll()):
+            pass
+    except AdminDeliveryError as error:
+        sys.exit(f"Could not read from Telegram: {error}")
+    print(f"Your chat id is {messages[0].chat_id}.")
+    print("Set PARKING_TELEGRAM_ADMIN_CHAT_ID to it in .env, then run `parking-assistant admin`.")
+
+
 def admin(settings: Settings) -> None:
+    if not settings.telegram_token_set:
+        sys.exit("Set PARKING_TELEGRAM_BOT_TOKEN in .env first.")
     if not settings.telegram_configured:
-        sys.exit("Set PARKING_TELEGRAM_BOT_TOKEN and PARKING_TELEGRAM_ADMIN_CHAT_ID in .env first.")
+        discover_chat_id(settings)
+        return
     agent = build_administrator(settings, build_database(settings))
     resent = agent.resend_unsent()
     logger.info("Administrator agent is listening (%d unsent requests delivered)", resent)

@@ -27,3 +27,9 @@ def test_telegram_settings_build_the_telegram_channel():
     settings = Settings(telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=42)
 
     assert isinstance(build_admin_channel(settings), TelegramChannel)
+
+
+def test_token_without_chat_id_still_builds_the_telegram_channel_for_setup():
+    settings = Settings(telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=0)
+
+    assert isinstance(build_admin_channel(settings), TelegramChannel)

@@ -45,7 +45,7 @@ def new_reservation_reference() -> str:
 
 
 def build_admin_channel(settings: Settings) -> AdminChannel:
-    if not settings.telegram_configured:
+    if not settings.telegram_token_set:
         return UnconfiguredChannel()
     return TelegramChannel(
         token=settings.telegram_bot_token.get_secret_value(),

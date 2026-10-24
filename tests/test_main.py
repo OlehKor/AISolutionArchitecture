@@ -1,7 +1,9 @@
 import pytest
 from pydantic import SecretStr
 
+from fakes import RecordingChannel
 from parking_assistant import __main__ as cli
+from parking_assistant.approval import AdminDeliveryError, IncomingMessage
 from parking_assistant.config import Settings
 
 UNCONFIGURED = Settings(telegram_bot_token=SecretStr(""), telegram_admin_chat_id=0)
@@ -84,3 +86,25 @@ def test_admin_command_resends_unsent_requests_and_then_serves(monkeypatch):
     cli.admin(CONFIGURED)
 
     assert calls == ["resend", "serve"]
+
+
+TOKEN_ONLY = Settings(telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=0)
+
+
+def test_admin_command_without_chat_id_prints_the_chat_id_and_exits(monkeypatch, capsys):
+    channel = RecordingChannel([[], [IncomingMessage(chat_id=555, text="hi")]])
+    monkeypatch.setattr(cli, "build_admin_channel", lambda settings: channel)
+
+    cli.admin(TOKEN_ONLY)
+
+    assert "Your chat id is 555" in capsys.readouterr().out
+
+
+def test_admin_setup_mode_reports_telegram_failures(monkeypatch):
+    channel = RecordingChannel([AdminDeliveryError("Telegram getUpdates failed with HTTP 401")])
+    monkeypatch.setattr(cli, "build_admin_channel", lambda settings: channel)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli.admin(TOKEN_ONLY)
+
+    assert "401" in str(stopped.value)
