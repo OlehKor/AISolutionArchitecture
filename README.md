@@ -1,5 +1,7 @@
 # Parking Assistant
 
+![CI](https://github.com/OlehKor/AISolutionArchitecture/actions/workflows/ci.yml/badge.svg)
+
 RAG chatbot for the fictional SkyPark Central parking garage. It answers questions about the garage, collects the details for a reservation, protects confidential data and ships with an evaluation of retrieval quality, latency and data protection.
 
 ## How it works
