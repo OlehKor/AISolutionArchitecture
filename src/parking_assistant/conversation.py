@@ -31,7 +31,7 @@ Set needs_live_data to true when the answer depends on opening hours, prices or 
 
 SLOT_SYSTEM = """Extract reservation details from the customer's latest message.
 Current local date and time: {now:%A %Y-%m-%d %H:%M}.
-Convert dates and times to YYYY-MM-DDTHH:MM (24-hour, local time). Resolve relative expressions such as "tomorrow" or "next Friday" from the current date. A time without a date means the nearest upcoming such time; for a departure it means the nearest such time after the arrival already collected.
+Convert dates and times to YYYY-MM-DDTHH:MM (24-hour, local time). Resolve relative expressions such as "tomorrow" or "next Friday" from the current date. If the customer states a date, including a relative one such as "tomorrow", without a clock time, return only the date (YYYY-MM-DD); never use the current time of day as the time. A time without a date means the nearest upcoming such time; for a departure it means the nearest such time after the arrival already collected.
 Details already collected: {collected}
 The assistant just asked: {pending_question}
 Fill only what the customer states in this message and use an empty string for everything else. If the customer gives a full name, put the given name in first_name and the family name in last_name. If the assistant just asked for one detail, treat a short plain reply as that detail even when the value looks unusual (a name can be any word), but leave it empty for replies such as yes, no or a question. Set confirmation only when the assistant asked the customer to confirm the summary."""

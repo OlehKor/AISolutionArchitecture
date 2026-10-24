@@ -2,5 +2,5 @@
 
 import os
 
-# gRPC (used by Milvus Lite) prints a harmless fork() notice to the console unless set before it loads.
-os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+# gRPC (Milvus Lite) prints harmless fork() and keepalive errors over the chat prompt unless set before it loads.
+os.environ.setdefault("GRPC_VERBOSITY", "NONE")

@@ -183,3 +183,10 @@ def test_reply_is_not_used_while_waiting_for_confirmation_or_dates():
 
 def test_the_message_that_starts_a_reservation_is_not_taken_as_an_answer():
     assert fill_pending_answer(ReservationDraft(), slot_updates(), "book") == slot_updates()
+
+
+def test_date_without_a_time_is_rejected_with_a_request_for_the_time():
+    updated, problems = apply_updates(ReservationDraft(), slot_updates(start="2026-11-01"), NOW)
+
+    assert updated.start == ""
+    assert problems == ("Please give the time as well as the date, for example 09:00.",)

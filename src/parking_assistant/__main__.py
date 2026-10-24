@@ -36,6 +36,10 @@ EXIT_WORDS = {"exit", "quit"}
 def chat(settings: Settings) -> None:
     if not settings.telegram_configured:
         logger.warning("Telegram is not configured: reservation requests will stay pending.")
+    else:
+        logger.info(
+            "Decisions are applied only while `parking-assistant admin` runs in another terminal."
+        )
     assistant = build_assistant(settings)
     session_id = str(uuid4())
     print("SkyPark Central assistant. Type 'exit' to leave.")

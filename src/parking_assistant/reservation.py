@@ -40,8 +40,12 @@ class SlotUpdates(BaseModel):
     first_name: str = Field(description="Driver's first name, or empty string.")
     last_name: str = Field(description="Driver's last name, or empty string.")
     car_number: str = Field(description="Car registration plate, or empty string.")
-    start: str = Field(description="Arrival as YYYY-MM-DDTHH:MM in local time, or empty string.")
-    end: str = Field(description="Departure as YYYY-MM-DDTHH:MM in local time, or empty string.")
+    start: str = Field(
+        description="Arrival as YYYY-MM-DDTHH:MM in local time, YYYY-MM-DD if no time was given, or empty string."
+    )
+    end: str = Field(
+        description="Departure as YYYY-MM-DDTHH:MM in local time, YYYY-MM-DD if no time was given, or empty string."
+    )
     confirmation: Literal["yes", "no", "none"] = Field(
         description="'yes' or 'no' only if the user answers a request to confirm the summary."
     )
@@ -96,6 +100,8 @@ def normalize_car_number(value: str) -> str:
 
 
 def parse_time(value: str) -> datetime:
+    if len(value.strip()) <= len("YYYY-MM-DD"):
+        raise InvalidSlotError("Please give the time as well as the date, for example 09:00.")
     try:
         return datetime.fromisoformat(value).replace(second=0, microsecond=0, tzinfo=None)
     except ValueError as error:
