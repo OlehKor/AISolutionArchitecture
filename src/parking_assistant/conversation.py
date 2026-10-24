@@ -34,7 +34,7 @@ Current local date and time: {now:%A %Y-%m-%d %H:%M}.
 Convert dates and times to YYYY-MM-DDTHH:MM (24-hour, local time). Resolve relative expressions such as "tomorrow" or "next Friday" from the current date. A time without a date means the nearest upcoming such time; for a departure it means the nearest such time after the arrival already collected.
 Details already collected: {collected}
 The assistant just asked: {pending_question}
-Fill only what the customer states in this message and use an empty string for everything else. If the customer gives a full name, put the given name in first_name and the family name in last_name. If the assistant just asked for one detail and the message does not contain it, leave every field empty. Set confirmation only when the assistant asked the customer to confirm the summary."""
+Fill only what the customer states in this message and use an empty string for everything else. If the customer gives a full name, put the given name in first_name and the family name in last_name. If the assistant just asked for one detail, treat a short plain reply as that detail even when the value looks unusual (a name can be any word), but leave it empty for replies such as yes, no or a question. Set confirmation only when the assistant asked the customer to confirm the summary."""
 
 ANSWER_SYSTEM = """You are the virtual assistant of SkyPark Central, an underground parking garage.
 Answer the customer's question using ONLY the knowledge excerpts and live data below. Be concise and friendly.

@@ -32,6 +32,7 @@ from parking_assistant.reservation import (
     ReservationDraft,
     Step,
     advance,
+    fill_pending_answer,
     is_started,
     render_cancelled,
     render_pending_prompt,
@@ -144,7 +145,8 @@ def build_graph(deps: Dependencies) -> StateGraph:
     def reserve(state: ChatState) -> dict:
         now = deps.clock()
         draft = _draft(state)
-        updates = deps.model.extract_slots(_latest_message(state), draft, now)
+        message = _latest_message(state)
+        updates = fill_pending_answer(draft, deps.model.extract_slots(message, draft, now), message)
         outcome = advance(draft, updates, now)
         if outcome.step is not Step.BOOK:
             return {"draft": outcome.draft, "reply": _reply_for(outcome, not draft.active)}

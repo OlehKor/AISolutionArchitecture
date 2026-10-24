@@ -13,6 +13,10 @@ DISPLAY_FORMAT = "%a %d %b %Y, %H:%M"
 MAX_STAY = timedelta(days=30)
 MAX_ADVANCE = timedelta(days=90)
 START_GRACE = timedelta(minutes=5)
+MAX_ANSWER_WORDS = {"first_name": 2, "last_name": 3, "car_number": 2}
+NOT_AN_ANSWER = frozenset(
+    {"yes", "no", "y", "n", "yeah", "yep", "nope", "ok", "okay", "cancel", "stop", "hi", "hello"}
+)
 
 NAME_PATTERN = re.compile(r"[^\W\d_]+(?:[ '\-][^\W\d_]+)*")
 PLATE_PATTERN = re.compile(r"[A-Z0-9]{3,10}")
@@ -140,6 +144,40 @@ def _apply_text_field(
         return replace(draft, **{field: normalize(raw)}), ()
     except InvalidSlotError as error:
         return draft, (str(error),)
+
+
+def _plain(value: str) -> str:
+    return re.sub(r"[\s-]", "", value).casefold()
+
+
+def _adds_information(draft: ReservationDraft, updates: SlotUpdates) -> bool:
+    known = asdict(draft)
+    return any(
+        getattr(updates, field) and _plain(getattr(updates, field)) != _plain(known[field])
+        for field in FIELD_ORDER
+    )
+
+
+def fill_pending_answer(draft: ReservationDraft, updates: SlotUpdates, message: str) -> SlotUpdates:
+    """Take a short plain reply as the answer to the pending name or plate question.
+
+    The language model sometimes returns nothing for unusual words such as an unfamiliar name.
+    """
+    missing = missing_fields(draft)
+    pending = missing[0] if draft.active and missing and not draft.awaiting_confirmation else ""
+    words = message.split()
+    spoken = {word.casefold().strip(".,!") for word in words}
+    if (
+        pending not in MAX_ANSWER_WORDS
+        or not 0 < len(words) <= MAX_ANSWER_WORDS[pending]
+        or "?" in message
+        or spoken & NOT_AN_ANSWER
+        or _adds_information(draft, updates)
+    ):
+        return updates
+    if pending == "first_name" and len(words) == 2:
+        return updates.model_copy(update={"first_name": words[0], "last_name": words[1]})
+    return updates.model_copy(update={pending: " ".join(words)})
 
 
 def apply_updates(

@@ -253,3 +253,25 @@ def test_sessions_do_not_share_reservation_state(database):
     reply = assistant.reply("two", "Book a space")
 
     assert "first name" in reply
+
+
+def test_unusual_name_is_accepted_even_when_the_model_extracts_nothing(database):
+    model = ScriptedModel([RESERVE, RESERVE, RESERVE], [slot_updates()] * 3)
+    assistant = make_assistant(model, database)
+
+    assistant.reply("s1", "i need parking")
+    after_first = assistant.reply("s1", "ol")
+    after_last = assistant.reply("s1", "porol")
+
+    assert after_first == "What is your last name?"
+    assert after_last == "What is your car registration (licence plate) number?"
+
+
+def test_invalid_name_is_explained_instead_of_repeating_the_question(database):
+    model = ScriptedModel([RESERVE, RESERVE], [slot_updates(), slot_updates()])
+    assistant = make_assistant(model, database)
+
+    assistant.reply("s1", "i need parking")
+    reply = assistant.reply("s1", "R2D2")
+
+    assert "letters only" in reply

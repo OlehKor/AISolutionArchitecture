@@ -9,6 +9,7 @@ from parking_assistant.reservation import (
     Step,
     advance,
     apply_updates,
+    fill_pending_answer,
     missing_fields,
     normalize_car_number,
     normalize_name,
@@ -123,3 +124,62 @@ def test_summary_message_shows_the_details():
     assert "Anna Kowalska" in summary
     assert "ABC123" in summary
     assert "25 Oct 2026, 09:00" in summary
+
+
+@pytest.mark.parametrize(
+    ("draft", "message", "expected"),
+    [
+        (ReservationDraft(active=True), "ol", {"first_name": "ol"}),
+        (ReservationDraft(active=True), "ol porol", {"first_name": "ol", "last_name": "porol"}),
+        (
+            ReservationDraft(active=True, first_name="Ol"),
+            "van der Berg",
+            {"last_name": "van der Berg"},
+        ),
+        (
+            ReservationDraft(active=True, first_name="Ol", last_name="Po"),
+            "abc-123",
+            {"car_number": "abc-123"},
+        ),
+    ],
+)
+def test_short_plain_reply_answers_the_pending_question(draft, message, expected):
+    result = fill_pending_answer(draft, slot_updates(), message)
+
+    assert {k: v for k, v in result.model_dump().items() if v not in ("", "none")} == expected
+
+
+@pytest.mark.parametrize(
+    "message", ["yes", "No", "what is your name?", "I do not want to say", "hello", ""]
+)
+def test_replies_that_are_not_answers_are_left_alone(message):
+    assert (
+        fill_pending_answer(ReservationDraft(active=True), slot_updates(), message)
+        == slot_updates()
+    )
+
+
+def test_reply_is_not_forced_when_the_model_found_something_new():
+    updates = slot_updates(first_name="Anna")
+
+    assert fill_pending_answer(ReservationDraft(active=True), updates, "Anna") == updates
+
+
+def test_reply_is_not_used_when_the_model_only_repeated_known_details():
+    draft = ReservationDraft(active=True, first_name="Ol")
+
+    result = fill_pending_answer(draft, slot_updates(first_name="ol"), "porol")
+
+    assert result.last_name == "porol"
+
+
+def test_reply_is_not_used_while_waiting_for_confirmation_or_dates():
+    awaiting = replace(COMPLETE, awaiting_confirmation=True)
+    needs_dates = ReservationDraft(active=True, first_name="A", last_name="B", car_number="ABC123")
+
+    assert fill_pending_answer(awaiting, slot_updates(), "ok2") == slot_updates()
+    assert fill_pending_answer(needs_dates, slot_updates(), "tomorrow") == slot_updates()
+
+
+def test_the_message_that_starts_a_reservation_is_not_taken_as_an_answer():
+    assert fill_pending_answer(ReservationDraft(), slot_updates(), "book") == slot_updates()

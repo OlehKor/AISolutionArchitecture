@@ -123,6 +123,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     logging.getLogger("grpc._server").setLevel(logging.CRITICAL)
     # Telegram request URLs contain the bot token and httpx logs them at INFO.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     args = parse_args(sys.argv[1:] if argv is None else argv)
     load_dotenv(PROJECT_ROOT / ".env")
