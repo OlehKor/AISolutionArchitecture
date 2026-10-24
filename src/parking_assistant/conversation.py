@@ -142,12 +142,14 @@ class LlmConversationModel:
         live_data: str,
         now: datetime,
     ) -> str:
-        return self._answerer.invoke(
-            {
-                "now": now,
-                "context": format_context(passages),
-                "live_data": live_data,
-                "history": history,
-                "message": question,
-            }
+        return str(
+            self._answerer.invoke(
+                {
+                    "now": now,
+                    "context": format_context(passages),
+                    "live_data": live_data,
+                    "history": history,
+                    "message": question,
+                }
+            )
         )

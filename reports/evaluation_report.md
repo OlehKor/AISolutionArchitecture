@@ -1,6 +1,6 @@
 # Evaluation report
 
-Generated: 2026-10-24 22:30
+Generated: 2026-10-24 23:05
 
 ## Retrieval accuracy
 
@@ -20,8 +20,9 @@ Questions with a relevant chunk missing from the top results:
 
 | Stage | Requests | Mean | p50 | p95 | Max |
 |---|---|---|---|---|---|
-| Retrieval (vector search) | 29 | 5.8 | 5.7 | 6.7 | 7.5 |
-| Guard rails (input check) | 32 | 4.6 | 1.3 | 10.9 | 75.2 |
+| Retrieval (vector search) | 29 | 6.1 | 5.6 | 7.6 | 12.1 |
+| Guard rails (input check) | 32 | 4.7 | 1.4 | 10.1 | 74.9 |
+| End to end (LLM answer) | 29 | 2235.9 | 2143.5 | 2756.6 | 3580.2 |
 
 ## Data protection
 

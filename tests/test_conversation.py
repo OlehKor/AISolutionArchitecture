@@ -78,4 +78,6 @@ def test_llm_model_formats_all_prompts_and_parses_structured_output():
 
     assert model.classify([], "I want to book", draft).intent == "reserve"
     assert model.extract_slots("I am Anna", draft, now).first_name == "Anna"
-    assert model.answer([], "Where are you?", [], "", now) == "stub reply"
+    answer = model.answer([], "Where are you?", [], "", now)
+    assert type(answer) is str
+    assert answer == "stub reply"
