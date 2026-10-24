@@ -25,7 +25,7 @@ Intents:
 - other: greetings, thanks, small talk, anything unrelated to parking.
 Reservation in progress: {reservation_state}
 If a reservation is in progress and the message answers the pending question, gives reservation details or says yes/no to a confirmation, choose reserve.
-Choose cancel only when a reservation is in progress.
+Choose cancel only when a reservation is in progress and the customer explicitly asks to cancel, abort or stop it. A plain "no" or a request to change a detail is reserve, never cancel.
 Set needs_live_data to true when the answer depends on opening hours, prices or current availability."""
 
 SLOT_SYSTEM = """Extract reservation details from the customer's latest message.
@@ -33,7 +33,7 @@ Current local date and time: {now:%A %Y-%m-%d %H:%M}.
 Convert dates and times to YYYY-MM-DDTHH:MM (24-hour, local time). Resolve relative expressions such as "tomorrow" or "next Friday" from the current date. A time without a date means the nearest upcoming such time.
 Details already collected: {collected}
 The assistant just asked: {pending_question}
-Fill only what the customer states in this message and use an empty string for everything else. Set confirmation only when the assistant asked the customer to confirm the summary."""
+Fill only what the customer states in this message and use an empty string for everything else. If the customer gives a full name, put the given name in first_name and the family name in last_name. If the assistant just asked for one detail and the message does not contain it, leave every field empty. Set confirmation only when the assistant asked the customer to confirm the summary."""
 
 ANSWER_SYSTEM = """You are the virtual assistant of SkyPark Central, an underground parking garage.
 Answer the customer's question using ONLY the knowledge excerpts and live data below. Be concise and friendly.
@@ -74,7 +74,7 @@ class ConversationModel(Protocol):
 
 
 def describe_reservation_state(draft: ReservationDraft) -> str:
-    if not any(asdict(draft)[name] for name in FIELD_ORDER):
+    if not draft.active:
         return "none"
     if draft.awaiting_confirmation:
         return "yes, waiting for the customer to confirm the summary"

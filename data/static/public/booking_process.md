@@ -12,6 +12,9 @@ To reserve a parking space we need the following details:
 
 We do not ask for payment card details in the chat. Please never type card numbers or passwords into the chat.
 
+## Reservation limits
+A space can be reserved at most 90 days ahead and for a maximum stay of 30 days. The arrival and departure must be in the future.
+
 ## Reservation confirmation
 After you confirm the summary, your reservation is registered and you receive a reservation reference. The reserved space is held for you from the arrival time until the departure time.
 

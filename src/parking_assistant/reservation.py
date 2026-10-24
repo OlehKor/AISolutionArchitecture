@@ -11,6 +11,7 @@ FIELD_ORDER = ("first_name", "last_name", "car_number", "start", "end")
 TIME_FORMAT = "%Y-%m-%dT%H:%M"
 DISPLAY_FORMAT = "%a %d %b %Y, %H:%M"
 MAX_STAY = timedelta(days=30)
+MAX_ADVANCE = timedelta(days=90)
 START_GRACE = timedelta(minutes=5)
 
 NAME_PATTERN = re.compile(r"[^\W\d_]+(?:[ '\-][^\W\d_]+)*")
@@ -50,6 +51,7 @@ class ReservationDraft:
     start: str = ""
     end: str = ""
     awaiting_confirmation: bool = False
+    active: bool = False
 
 
 class Step(Enum):
@@ -72,7 +74,7 @@ def missing_fields(draft: ReservationDraft) -> tuple[str, ...]:
 
 
 def is_started(draft: ReservationDraft) -> bool:
-    return len(missing_fields(draft)) < len(FIELD_ORDER)
+    return draft.active
 
 
 def normalize_name(value: str, label: str) -> str:
@@ -106,6 +108,8 @@ def period_problem(start: str, end: str, now: datetime) -> str:
         return "The arrival time is in the past."
     if end and parse_time(end) <= now:
         return "The departure time is in the past."
+    if start and parse_time(start) > now + MAX_ADVANCE:
+        return f"Reservations can be made at most {MAX_ADVANCE.days} days ahead."
     if start and end and parse_time(end) <= parse_time(start):
         return "The departure must be after the arrival."
     if start and end and parse_time(end) - parse_time(start) > MAX_STAY:
@@ -159,7 +163,7 @@ def apply_updates(
 
 
 def advance(draft: ReservationDraft, updates: SlotUpdates, now: datetime) -> Outcome:
-    updated, problems = apply_updates(draft, updates, now)
+    updated, problems = apply_updates(replace(draft, active=True), updates, now)
     if missing_fields(updated):
         return Outcome(replace(updated, awaiting_confirmation=False), Step.ASK, problems)
     if draft.awaiting_confirmation and updated == draft and not problems:
@@ -178,9 +182,11 @@ def _with_problems(problems: tuple[str, ...], text: str) -> str:
     return "\n".join([*problems, text]) if problems else text
 
 
-def render_question(draft: ReservationDraft, problems: tuple[str, ...] = ()) -> str:
+def render_question(
+    draft: ReservationDraft, problems: tuple[str, ...] = (), introduce: bool = False
+) -> str:
     question = QUESTIONS[missing_fields(draft)[0]]
-    if not is_started(draft) and not problems:
+    if introduce and not problems:
         question = f"I can reserve a space for you. I need a few details.\n{question}"
     return _with_problems(problems, question)
 

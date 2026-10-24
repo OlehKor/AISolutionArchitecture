@@ -17,11 +17,12 @@ from parking_assistant.reservation import ReservationDraft, SlotUpdates
 
 def test_reservation_state_description():
     assert describe_reservation_state(ReservationDraft()) == "none"
+    assert "still missing: first_name" in describe_reservation_state(ReservationDraft(active=True))
     assert "still missing: last_name" in describe_reservation_state(
-        ReservationDraft(first_name="Anna", car_number="ABC123", start="s", end="e")
+        ReservationDraft(first_name="Anna", car_number="ABC123", start="s", end="e", active=True)
     )
     assert "waiting for the customer to confirm" in describe_reservation_state(
-        ReservationDraft("Anna", "K", "ABC123", "s", "e", awaiting_confirmation=True)
+        ReservationDraft("Anna", "K", "ABC123", "s", "e", awaiting_confirmation=True, active=True)
     )
 
 

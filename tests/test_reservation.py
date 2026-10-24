@@ -24,6 +24,7 @@ COMPLETE = ReservationDraft(
     car_number="ABC123",
     start="2026-10-25T09:00",
     end="2026-10-25T17:30",
+    active=True,
 )
 COMPLETE_UPDATES = {
     "first_name": "Anna",
@@ -62,6 +63,7 @@ def test_normalize_car_number_uppercases_and_strips_separators():
         ("2026-10-24T09:00", "", "The arrival time is in the past."),
         ("2026-10-25T09:00", "2026-10-25T08:00", "The departure must be after the arrival."),
         ("2026-10-25T09:00", "2026-12-25T09:00", "The maximum reservation length is 30 days."),
+        ("2027-06-01T09:00", "2027-06-02T09:00", "Reservations can be made at most 90 days ahead."),
         ("2026-10-25T09:00", "2026-10-25T17:00", ""),
     ],
 )
@@ -73,6 +75,15 @@ def test_apply_updates_reports_invalid_values_and_keeps_draft():
     updated, problems = apply_updates(ReservationDraft(), slot_updates(first_name="R2D2"), NOW)
     assert updated == ReservationDraft()
     assert problems == ("The first name should contain letters only.",)
+
+
+def test_advance_marks_the_reservation_active_even_without_details():
+    outcome = advance(ReservationDraft(), slot_updates(), NOW)
+
+    assert outcome.step is Step.ASK
+    assert outcome.draft.active
+    assert render_question(outcome.draft, introduce=True).startswith("I can reserve")
+    assert render_question(outcome.draft) == "What is your first name?"
 
 
 def test_advance_asks_for_missing_details_first():

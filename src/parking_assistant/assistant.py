@@ -71,9 +71,9 @@ def _draft(state: ChatState) -> ReservationDraft:
     return state.get("draft", EMPTY_DRAFT)
 
 
-def _reply_for(outcome: Outcome) -> str:
+def _reply_for(outcome: Outcome, introduce: bool) -> str:
     if outcome.step is Step.ASK:
-        return render_question(outcome.draft, outcome.problems)
+        return render_question(outcome.draft, outcome.problems, introduce)
     if outcome.step is Step.CONFIRM:
         return render_summary(outcome.draft, outcome.problems)
     return render_revision_request()
@@ -120,7 +120,7 @@ def build_graph(deps: Dependencies) -> StateGraph:
         updates = deps.model.extract_slots(_latest_message(state), draft, now)
         outcome = advance(draft, updates, now)
         if outcome.step is not Step.BOOK:
-            return {"draft": outcome.draft, "reply": _reply_for(outcome)}
+            return {"draft": outcome.draft, "reply": _reply_for(outcome, not draft.active)}
         try:
             reservation = deps.database.create_reservation(outcome.draft, deps.new_reference(), now)
         except NoAvailabilityError:

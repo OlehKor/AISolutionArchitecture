@@ -114,6 +114,17 @@ def test_info_question_during_reservation_returns_to_the_pending_question(databa
     assert "Back to your reservation: What is your last name?" in reply
 
 
+def test_unrelated_reply_keeps_asking_the_pending_question_without_repeating_the_intro(database):
+    model = ScriptedModel([RESERVE, RESERVE], [slot_updates(), slot_updates()])
+    assistant = make_assistant(model, database)
+
+    first = assistant.reply("s1", "I want to park my car")
+    second = assistant.reply("s1", "yes")
+
+    assert first.startswith("I can reserve a space")
+    assert second == "What is your first name?"
+
+
 def test_cancel_discards_the_reservation_in_progress(database):
     model = ScriptedModel(
         [RESERVE, CANCEL, RESERVE], [slot_updates(first_name="Anna"), slot_updates()]
