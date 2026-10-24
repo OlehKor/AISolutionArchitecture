@@ -1,4 +1,5 @@
 import re
+import threading
 from dataclasses import dataclass
 
 from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
@@ -107,15 +108,17 @@ class PiiRedactor:
         self._analyzer.registry.add_recognizer(_credential_recognizer())
         self._anonymizer = AnonymizerEngine()
         self._allow_list = list(allow_list)
+        self._lock = threading.Lock()
 
     def redact(self, text: str, entities: tuple[str, ...]) -> Redaction:
-        findings = self._analyzer.analyze(
-            text=text,
-            language="en",
-            entities=list(entities),
-            allow_list=self._allow_list,
-            score_threshold=SCORE_THRESHOLD,
-        )
+        with self._lock:
+            findings = self._analyzer.analyze(
+                text=text,
+                language="en",
+                entities=list(entities),
+                allow_list=self._allow_list,
+                score_threshold=SCORE_THRESHOLD,
+            )
         if not findings:
             return Redaction(text=text, entities=())
         masked = self._anonymizer.anonymize(

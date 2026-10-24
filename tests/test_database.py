@@ -93,16 +93,15 @@ def test_rejected_reservations_release_their_space(database):
     assert database.free_reservable_spaces(DRAFT.start, DRAFT.end) == 150
 
 
-def test_decisions_are_reported_once_and_only_for_the_given_references(database):
+def test_decisions_are_claimed_once_and_only_for_the_given_references(database):
     database.create_reservation(DRAFT, "PK-TEST01", NOW)
+    assert database.claim_decisions(["PK-TEST01"]) == []
     database.decide("PK-TEST01", CONFIRMED, "", NOW)
 
-    assert database.unreported_decisions(["PK-OTHER1"]) == []
-    assert [r.reference for r in database.unreported_decisions(["PK-TEST01"])] == ["PK-TEST01"]
-
-    database.mark_notified(["PK-TEST01"])
-
-    assert database.unreported_decisions(["PK-TEST01"]) == []
+    assert database.claim_decisions(["PK-OTHER1"]) == []
+    claimed = database.claim_decisions(["PK-TEST01"])
+    assert [(r.reference, r.status) for r in claimed] == [("PK-TEST01", CONFIRMED)]
+    assert database.claim_decisions(["PK-TEST01"]) == []
 
 
 def test_unknown_reference_raises(database):
@@ -130,7 +129,7 @@ def test_database_without_approval_columns_is_migrated(database_path, tmp_path):
     legacy = migrated.get_reservation("PK-OLD001")
     assert legacy.status == CONFIRMED
     assert migrated.pending_reservations() == []
-    assert migrated.unreported_decisions(["PK-OLD001"]) == []
+    assert migrated.claim_decisions(["PK-OLD001"]) == []
     fresh = migrated.create_reservation(DRAFT, "PK-NEW001", NOW)
     assert fresh.status == PENDING
     assert [r.reference for r in migrated.pending_reservations()] == ["PK-NEW001"]

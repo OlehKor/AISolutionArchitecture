@@ -1,13 +1,15 @@
 import argparse
 import logging
 import sys
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from uuid import uuid4
 
 from dotenv import load_dotenv
 
 from parking_assistant.approval import AdminDeliveryError
+from parking_assistant.assistant import ParkingAssistant
 from parking_assistant.composition import (
     build_admin_channel,
     build_administrator,
@@ -17,6 +19,7 @@ from parking_assistant.composition import (
     build_knowledge,
 )
 from parking_assistant.config import PROJECT_ROOT, Settings, get_settings
+from parking_assistant.database import ParkingDatabase
 from parking_assistant.evaluation import (
     load_guardrail_dataset,
     load_retrieval_cases,
@@ -31,6 +34,29 @@ from parking_assistant.models import build_embeddings
 
 logger = logging.getLogger("parking_assistant")
 EXIT_WORDS = {"exit", "quit"}
+DECISION_CHECK_SECONDS = 3
+
+
+def announce_decisions(
+    assistant: ParkingAssistant,
+    session_id: str,
+    open_database: Callable[[], ParkingDatabase],
+    stop: threading.Event,
+    interval: float = DECISION_CHECK_SECONDS,
+) -> None:
+    """Print administrator decisions as soon as they arrive, without waiting for the next message."""
+    database = open_database()
+    try:
+        while not stop.wait(interval):
+            try:
+                news = assistant.announcements(session_id, database)
+            except Exception:
+                logger.exception("Could not check for administrator decisions")
+                continue
+            if news:
+                print(f"\nAssistant: {news}\nYou: ", end="", flush=True)
+    finally:
+        database.close()
 
 
 def chat(settings: Settings) -> None:
@@ -42,16 +68,25 @@ def chat(settings: Settings) -> None:
         )
     assistant = build_assistant(settings)
     session_id = str(uuid4())
+    stop = threading.Event()
+    threading.Thread(
+        target=announce_decisions,
+        args=(assistant, session_id, lambda: build_database(settings), stop),
+        daemon=True,
+    ).start()
     print("SkyPark Central assistant. Type 'exit' to leave.")
-    while True:
-        try:
-            text = input("You: ").strip()
-        except EOFError:
-            return
-        if text.lower() in EXIT_WORDS:
-            return
-        if text:
-            print(f"Assistant: {assistant.reply(session_id, text)}")
+    try:
+        while True:
+            try:
+                text = input("You: ").strip()
+            except EOFError:
+                return
+            if text.lower() in EXIT_WORDS:
+                return
+            if text:
+                print(f"Assistant: {assistant.reply(session_id, text)}")
+    finally:
+        stop.set()
 
 
 def discover_chat_id(settings: Settings) -> None:

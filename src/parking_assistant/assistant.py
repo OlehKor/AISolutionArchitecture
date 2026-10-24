@@ -94,6 +94,11 @@ def _draft(state: ChatState) -> ReservationDraft:
     return state.get("draft", EMPTY_DRAFT)
 
 
+def claim_announcements(database: ParkingDatabase, references: list[str]) -> str:
+    decided = database.claim_decisions(references)
+    return "\n\n".join(render_decision_notice(reservation) for reservation in decided)
+
+
 def _reply_for(outcome: Outcome, introduce: bool) -> str:
     if outcome.step is Step.ASK:
         return render_question(outcome.draft, outcome.problems, introduce)
@@ -181,9 +186,8 @@ def build_graph(deps: Dependencies) -> StateGraph:
     def finalize(state: ChatState) -> dict:
         reply = state["reply"]
         if state["intent"] not in (BLOCKED, STATUS):
-            decided = deps.database.unreported_decisions(state.get("references", []))
-            deps.database.mark_notified([r.reference for r in decided])
-            reply = "\n\n".join([*(render_decision_notice(r) for r in decided), reply])
+            news = claim_announcements(deps.database, state.get("references", []))
+            reply = "\n\n".join(part for part in (news, reply) if part)
         safe_reply = deps.guardrails.sanitize_output(reply).text
         if state["intent"] == BLOCKED:
             return {"reply": safe_reply}
@@ -234,6 +238,7 @@ class ParkingAssistant:
 
     def __init__(self, deps: Dependencies) -> None:
         saver = InMemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=STATE_TYPES))
+        self._deps = deps
         self._graph = build_graph(deps).compile(checkpointer=saver)
 
     def reply(self, session_id: str, text: str) -> str:
@@ -241,3 +246,13 @@ class ParkingAssistant:
             {"user_text": text}, config={"configurable": {"thread_id": session_id}}
         )
         return result["reply"]
+
+    def announcements(self, session_id: str, database: ParkingDatabase | None = None) -> str:
+        """New administrator decisions for this session, or an empty string.
+
+        A caller on another thread passes its own database connection.
+        """
+        config = {"configurable": {"thread_id": session_id}}
+        references = self._graph.get_state(config).values.get("references", [])
+        news = claim_announcements(database or self._deps.database, references)
+        return self._deps.guardrails.sanitize_output(news).text if news else ""

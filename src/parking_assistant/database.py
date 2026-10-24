@@ -173,11 +173,16 @@ class ParkingDatabase:
         )
         return cursor.rowcount == 1
 
-    def unreported_decisions(self, references: Sequence[str]) -> list[Reservation]:
-        return self._select_reservations(
-            f"status != ? AND customer_notified = 0 AND reference IN ({_placeholders(references)})",
+    def claim_decisions(self, references: Sequence[str]) -> list[Reservation]:
+        """Return decided requests not yet reported to the customer and mark them reported."""
+        rows = self._connection.execute(
+            "UPDATE reservations SET customer_notified = 1"
+            " WHERE status != ? AND customer_notified = 0"
+            f" AND reference IN ({_placeholders(references)})"
+            f" RETURNING {RESERVATION_COLUMNS}",
             (PENDING, *references),
-        )
+        ).fetchall()
+        return sorted((Reservation(**dict(row)) for row in rows), key=lambda r: r.reference)
 
     def mark_notified(self, references: Sequence[str]) -> None:
         self._connection.execute(

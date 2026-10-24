@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 from pydantic import SecretStr
 
@@ -10,6 +12,14 @@ UNCONFIGURED = Settings(telegram_bot_token=SecretStr(""), telegram_admin_chat_id
 CONFIGURED = Settings(telegram_bot_token=SecretStr("123:abc"), telegram_admin_chat_id=42)
 
 
+class ClosableDatabase:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class RecordingAssistant:
     def __init__(self) -> None:
         self.messages: list[str] = []
@@ -17,6 +27,14 @@ class RecordingAssistant:
     def reply(self, session_id: str, text: str) -> str:
         self.messages.append(text)
         return f"echo: {text}"
+
+    def announcements(self, session_id: str, database=None) -> str:
+        return ""
+
+
+@pytest.fixture(autouse=True)
+def no_real_database(monkeypatch):
+    monkeypatch.setattr(cli, "build_database", lambda settings: ClosableDatabase())
 
 
 def test_cli_parses_chat_ingest_and_evaluate_commands():
@@ -108,3 +126,42 @@ def test_admin_setup_mode_reports_telegram_failures(monkeypatch):
         cli.admin(TOKEN_ONLY)
 
     assert "401" in str(stopped.value)
+
+
+def test_watcher_prints_decisions_as_they_arrive_and_closes_its_database(capsys):
+    stop = threading.Event()
+    database = ClosableDatabase()
+
+    class AnnouncingAssistant:
+        calls = 0
+
+        def announcements(self, session_id: str, db) -> str:
+            self.calls += 1
+            if self.calls == 2:
+                stop.set()
+                return "Good news: reservation PK-AAAAAA was confirmed."
+            return ""
+
+    cli.announce_decisions(AnnouncingAssistant(), "s1", lambda: database, stop, interval=0)
+
+    assert "Assistant: Good news: reservation PK-AAAAAA was confirmed." in capsys.readouterr().out
+    assert database.closed
+
+
+def test_watcher_survives_a_failed_check():
+    stop = threading.Event()
+
+    class FlakyAssistant:
+        calls = 0
+
+        def announcements(self, session_id: str, db) -> str:
+            self.calls += 1
+            if self.calls == 2:
+                stop.set()
+            raise RuntimeError("database is locked")
+
+    assistant = FlakyAssistant()
+
+    cli.announce_decisions(assistant, "s1", ClosableDatabase, stop, interval=0)
+
+    assert assistant.calls == 2

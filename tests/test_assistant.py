@@ -275,3 +275,28 @@ def test_invalid_name_is_explained_instead_of_repeating_the_question(database):
     reply = assistant.reply("s1", "R2D2")
 
     assert "letters only" in reply
+
+
+def test_announcements_deliver_a_decision_once_without_a_new_message(database):
+    model = ScriptedModel(*BOOKING_MODEL_ARGS)
+    assistant = make_assistant(model, database, redactor=MaskingRedactor("closed for maintenance"))
+    book_a_space(assistant)
+
+    assert assistant.announcements("s1") == ""
+
+    database.decide("PK-TEST01", REJECTED, "closed for maintenance", NOW)
+    news = assistant.announcements("s1")
+
+    assert "declined" in news
+    assert "closed for maintenance" not in news
+    assert assistant.announcements("s1") == ""
+
+
+def test_announcements_ignore_other_sessions_and_sessions_without_requests(database):
+    model = ScriptedModel(*BOOKING_MODEL_ARGS)
+    assistant = make_assistant(model, database)
+    book_a_space(assistant, "owner")
+    database.decide("PK-TEST01", CONFIRMED, "", NOW)
+
+    assert assistant.announcements("stranger") == ""
+    assert assistant.announcements("owner").startswith("Good news")
