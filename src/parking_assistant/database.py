@@ -161,6 +161,12 @@ class ParkingDatabase:
             (message_id, reference),
         )
 
+    def request_message_id_for(self, reference: str) -> int:
+        row = self._connection.execute(
+            "SELECT request_message_id FROM reservations WHERE reference = ?", (reference,)
+        ).fetchone()
+        return row["request_message_id"] or 0 if row else 0
+
     def reference_for_request_message(self, message_id: int) -> str:
         row = self._connection.execute(
             "SELECT reference FROM reservations WHERE request_message_id = ?", (message_id,)

@@ -10,13 +10,17 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from parking_assistant.approval import (
     AdminDeliveryError,
+    ButtonPress,
     Decision,
     IncomingMessage,
+    reason_from,
     render_admin_help,
     render_already_decided,
     render_clarification,
     render_decision_ack,
     render_pending_list,
+    render_reason_cancelled,
+    render_reason_prompt,
     render_request,
     render_unknown_reference,
     resolve_target,
@@ -48,11 +52,17 @@ Set reason to the reason the administrator gave, briefly, or an empty string. Th
 
 
 class AdminChannel(Protocol):
-    def send(self, text: str) -> int:
-        """Send a message to the administrator and return its message id."""
+    def send(self, text: str, decision_for: str = "") -> int:
+        """Send a message, with Approve/Reject buttons when `decision_for` names a request."""
 
-    def poll(self) -> list[IncomingMessage]:
-        """Wait for new messages from the administrator."""
+    def poll(self) -> list[IncomingMessage | ButtonPress]:
+        """Wait for new messages and button presses from the administrator."""
+
+    def answer_press(self, callback_id: str, text: str) -> None:
+        """Acknowledge a button press so the button stops showing as loading."""
+
+    def clear_buttons(self, message_id: int) -> None:
+        """Remove the buttons from a message once its request is decided."""
 
 
 class AdministratorModel(Protocol):
@@ -111,13 +121,16 @@ class AdministratorAgent:
         self._clock = clock
         self._admin_chat_id = admin_chat_id
         self._archive = archive
+        self._rejecting = ""
 
     def request_approval(self, reservation: Reservation) -> None:
         spaces_left = self._database.free_reservable_spaces(
             reservation.start_time, reservation.end_time
         )
         note = self._model.write_note(reservation, spaces_left, self._clock())
-        message_id = self._channel.send(render_request(reservation, spaces_left, note))
+        message_id = self._channel.send(
+            render_request(reservation, spaces_left, note), decision_for=reservation.reference
+        )
         self._database.record_request_message(reservation.reference, message_id)
 
     def resend_unsent(self) -> int:
@@ -132,12 +145,38 @@ class AdministratorAgent:
 
     def handle_admin_message(self, message: IncomingMessage) -> None:
         text = message.text.strip()
-        if text.startswith("/pending"):
+        if text == "/cancel":
+            self._rejecting = ""
+            self._channel.send(render_reason_cancelled())
+        elif text.startswith("/pending"):
             self._channel.send(render_pending_list(self._database.pending_reservations()))
         elif text.startswith("/"):
             self._channel.send(render_admin_help())
+        elif self._rejecting:
+            self._reject_with_reason(text)
         else:
             self._decide(message, text)
+
+    def handle_button(self, press: ButtonPress) -> None:
+        if not press.action:
+            self._channel.answer_press(press.callback_id, "Unknown button")
+            return
+        try:
+            reservation = self._database.get_reservation(press.reference)
+        except UnknownReservationError:
+            self._channel.answer_press(press.callback_id, "Unknown request")
+            return
+        if reservation.status != PENDING:
+            self._channel.answer_press(press.callback_id, f"Already {reservation.status}")
+            self._clear_buttons(reservation.reference)
+        elif press.action == "approve":
+            self._rejecting = ""
+            self._channel.answer_press(press.callback_id, "Approved")
+            self._finish(reservation, CONFIRMED, "")
+        else:
+            self._rejecting = reservation.reference
+            self._channel.answer_press(press.callback_id, "Type the reason")
+            self._channel.send(render_reason_prompt(reservation.reference))
 
     def serve(
         self,
@@ -170,14 +209,44 @@ class AdministratorAgent:
         self._database.mark_archived(reservation.reference)
         return True
 
-    def _handle_safely(self, message: IncomingMessage) -> None:
-        if message.chat_id != self._admin_chat_id:
-            logger.warning("Ignored a message from unauthorized chat %s", message.chat_id)
+    def _handle_safely(self, event: IncomingMessage | ButtonPress) -> None:
+        if event.chat_id != self._admin_chat_id:
+            logger.warning("Ignored a message from unauthorized chat %s", event.chat_id)
             return
         try:
-            self.handle_admin_message(message)
+            if isinstance(event, ButtonPress):
+                self.handle_button(event)
+            else:
+                self.handle_admin_message(event)
         except Exception:
             logger.exception("Could not process the administrator's message")
+
+    def _reject_with_reason(self, text: str) -> None:
+        reference, self._rejecting = self._rejecting, ""
+        reservation = self._database.get_reservation(reference)
+        if reservation.status != PENDING:
+            self._channel.send(render_already_decided(reservation))
+            return
+        self._finish(reservation, REJECTED, reason_from(text))
+
+    def _clear_buttons(self, reference: str) -> None:
+        message_id = self._database.request_message_id_for(reference)
+        if not message_id:
+            return
+        try:
+            self._channel.clear_buttons(message_id)
+        except AdminDeliveryError as error:
+            logger.warning("Could not remove the buttons from %s: %s", reference, error)
+
+    def _finish(self, reservation: Reservation, status: str, reason: str) -> None:
+        if not self._database.decide(reservation.reference, status, reason, self._clock()):
+            current = self._database.get_reservation(reservation.reference)
+            self._channel.send(render_already_decided(current))
+            return
+        decided = self._database.get_reservation(reservation.reference)
+        archived = status != CONFIRMED or self._archive_confirmed(decided)
+        self._channel.send(render_decision_ack(decided, archived))
+        self._clear_buttons(reservation.reference)
 
     def _decide(self, message: IncomingMessage, text: str) -> None:
         pending = self._database.pending_reservations()
@@ -199,11 +268,4 @@ class AdministratorAgent:
             self._channel.send(render_clarification(reservation.reference))
             return
         status = CONFIRMED if decision.verdict == "approve" else REJECTED
-        if self._database.decide(reservation.reference, status, decision.reason, self._clock()):
-            decided = self._database.get_reservation(reservation.reference)
-            archived = status != CONFIRMED or self._archive_confirmed(decided)
-            self._channel.send(render_decision_ack(decided, archived))
-        else:
-            self._channel.send(
-                render_already_decided(self._database.get_reservation(reservation.reference))
-            )
+        self._finish(reservation, status, decision.reason)

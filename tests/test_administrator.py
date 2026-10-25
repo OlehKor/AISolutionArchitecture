@@ -5,7 +5,7 @@ from langchain_core.runnables import RunnableLambda
 
 from fakes import NOW, RecordingArchive, RecordingChannel, ScriptedAdministratorModel
 from parking_assistant.administrator import AdministratorAgent, LlmAdministratorModel
-from parking_assistant.approval import AdminDeliveryError, Decision, IncomingMessage
+from parking_assistant.approval import AdminDeliveryError, ButtonPress, Decision, IncomingMessage
 from parking_assistant.database import CONFIRMED, PENDING, REJECTED
 from parking_assistant.reservation import ReservationDraft
 
@@ -260,3 +260,155 @@ def test_serve_retries_archiving_before_every_poll(database):
     agent.serve(should_stop=lambda: not channel._incoming, pause=lambda seconds: None)
 
     assert len(archive.archived) == 1
+
+
+def press(action: str, reference: str = "PK-TEST01", chat_id: int = ADMIN_CHAT) -> ButtonPress:
+    return ButtonPress(
+        chat_id=chat_id, callback_id="cb1", message_id=101, action=action, reference=reference
+    )
+
+
+def test_requests_are_sent_with_decision_buttons(database):
+    agent, channel, _ = make_agent(database)
+
+    submit(database, agent)
+
+    assert channel.buttons_for == ["PK-TEST01"]
+
+
+def test_approve_button_confirms_immediately_without_the_language_model(database):
+    archive = RecordingArchive()
+    model = ScriptedAdministratorModel()
+    agent, channel, _ = make_agent(database, model=model, archive=archive)
+    submit(database, agent)
+
+    agent.handle_button(press("approve"))
+
+    assert database.get_reservation("PK-TEST01").status == CONFIRMED
+    assert model.interpreted == []
+    assert [r.reference for r in archive.archived] == ["PK-TEST01"]
+    assert channel.pressed == [("cb1", "Approved")]
+    assert "confirmed" in channel.sent[-1]
+    assert channel.cleared == [101]
+
+
+def test_reject_button_asks_for_a_reason_and_the_next_message_is_stored_as_it(database):
+    agent, channel, _ = make_agent(database)
+    submit(database, agent)
+
+    agent.handle_button(press("reject"))
+
+    assert database.get_reservation("PK-TEST01").status == PENDING
+    assert channel.pressed == [("cb1", "Type the reason")]
+    assert "Why are you rejecting PK-TEST01" in channel.sent[-1]
+
+    agent.handle_admin_message(message("  closed for an   event "))
+
+    rejected = database.get_reservation("PK-TEST01")
+    assert (rejected.status, rejected.admin_comment) == (REJECTED, "closed for an event")
+    assert "rejected" in channel.sent[-1]
+    assert channel.cleared == [101]
+
+
+def test_a_dash_rejects_without_a_reason(database):
+    agent, _, _ = make_agent(database)
+    submit(database, agent)
+    agent.handle_button(press("reject"))
+
+    agent.handle_admin_message(message("-"))
+
+    rejected = database.get_reservation("PK-TEST01")
+    assert (rejected.status, rejected.admin_comment) == (REJECTED, "")
+
+
+def test_cancel_keeps_the_request_pending_and_later_messages_are_ordinary_again(database):
+    model = ScriptedAdministratorModel(APPROVE)
+    agent, channel, _ = make_agent(database, model=model)
+    submit(database, agent)
+    agent.handle_button(press("reject"))
+
+    agent.handle_admin_message(message("/cancel"))
+    agent.handle_admin_message(message("approve"))
+
+    assert "still pending" in channel.sent[-2]
+    assert database.get_reservation("PK-TEST01").status == CONFIRMED
+
+
+def test_approving_while_a_reason_is_awaited_forgets_the_rejection(database):
+    model = ScriptedAdministratorModel(UNCLEAR)
+    agent, _, _ = make_agent(database, model=model)
+    submit(database, agent, "PK-FIRST1", "ABC123")
+    submit(database, agent, "PK-SECOND", "XYZ789")
+    agent.handle_button(press("reject", "PK-FIRST1"))
+
+    agent.handle_button(press("approve", "PK-SECOND"))
+    agent.handle_admin_message(message("hello?", reply_to=0))
+
+    assert database.get_reservation("PK-FIRST1").status == PENDING
+    assert database.get_reservation("PK-SECOND").status == CONFIRMED
+    assert model.interpreted == [("PK-FIRST1", "hello?")]
+
+
+def test_pending_command_does_not_disturb_a_rejection_in_progress(database):
+    agent, channel, _ = make_agent(database)
+    submit(database, agent)
+    agent.handle_button(press("reject"))
+
+    agent.handle_admin_message(message("/pending"))
+    agent.handle_admin_message(message("no spaces"))
+
+    assert "PK-TEST01" in channel.sent[-2]
+    assert database.get_reservation("PK-TEST01").admin_comment == "no spaces"
+
+
+def test_pressing_a_button_for_a_decided_request_only_reports_it(database):
+    agent, channel, _ = make_agent(database)
+    submit(database, agent)
+    agent.handle_button(press("approve"))
+    sent_before = len(channel.sent)
+
+    agent.handle_button(press("reject"))
+
+    assert channel.pressed[-1] == ("cb1", "Already confirmed")
+    assert len(channel.sent) == sent_before
+    assert database.get_reservation("PK-TEST01").status == CONFIRMED
+
+
+def test_unknown_or_forged_buttons_are_refused(database):
+    agent, channel, _ = make_agent(database)
+
+    agent.handle_button(press("", ""))
+    agent.handle_button(press("approve", "PK-ABCDEF"))
+
+    assert [text for _, text in channel.pressed] == ["Unknown button", "Unknown request"]
+
+
+def test_a_failure_to_remove_the_buttons_does_not_undo_the_decision(database):
+    agent, channel, _ = make_agent(database)
+    channel.clearing_fails = True
+    submit(database, agent)
+
+    agent.handle_button(press("approve"))
+
+    assert database.get_reservation("PK-TEST01").status == CONFIRMED
+    assert "confirmed" in channel.sent[-1]
+
+
+def test_a_decision_in_words_also_removes_the_buttons(database):
+    agent, channel, _ = make_agent(database, model=ScriptedAdministratorModel(APPROVE))
+    submit(database, agent)
+
+    agent.handle_admin_message(message("approve"))
+
+    assert channel.cleared == [101]
+
+
+def test_button_presses_from_other_chats_are_ignored(database):
+    channel = RecordingChannel([[press("approve", chat_id=999), press("approve")]])
+    agent, channel, _ = make_agent(database, channel)
+    submit(database, agent)
+
+    agent.serve(should_stop=lambda: not channel._incoming, pause=lambda seconds: None)
+
+    assert database.get_reservation("PK-TEST01").status == CONFIRMED
+    assert len(channel.pressed) == 1

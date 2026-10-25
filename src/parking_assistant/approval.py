@@ -9,6 +9,9 @@ from parking_assistant.database import CONFIRMED, PENDING, REJECTED, Reservation
 from parking_assistant.reservation import display_time
 
 REFERENCE_PATTERN = re.compile(r"PK-[0-9A-F]{6}")
+BUTTON_ACTIONS = ("approve", "reject")
+NO_REASON = "-"
+MAX_REASON_LENGTH = 300
 
 
 class AdminDeliveryError(Exception):
@@ -29,6 +32,34 @@ class IncomingMessage:
     chat_id: int
     text: str
     reply_to_message_id: int = 0
+
+
+@dataclass(frozen=True)
+class ButtonPress:
+    """The administrator tapped Approve or Reject under a request."""
+
+    chat_id: int
+    callback_id: str
+    message_id: int
+    action: str
+    reference: str
+
+
+def button_data(action: str, reference: str) -> str:
+    return f"{action}:{reference}"
+
+
+def parse_button_data(data: str) -> tuple[str, str]:
+    """Split callback data into (action, reference); empty strings when it is not ours."""
+    action, _, reference = data.partition(":")
+    if action in BUTTON_ACTIONS and REFERENCE_PATTERN.fullmatch(reference):
+        return action, reference
+    return "", ""
+
+
+def reason_from(text: str) -> str:
+    reason = " ".join(text.split())[:MAX_REASON_LENGTH]
+    return "" if reason == NO_REASON else reason
 
 
 @dataclass(frozen=True)
@@ -59,6 +90,17 @@ def _period(reservation: Reservation) -> str:
     return f"{display_time(reservation.start_time)} - {display_time(reservation.end_time)}"
 
 
+def render_reason_prompt(reference: str) -> str:
+    return (
+        f"Why are you rejecting {reference}? Type the reason and send it. "
+        f"Send {NO_REASON} to reject without a reason, or /cancel to keep the request pending."
+    )
+
+
+def render_reason_cancelled() -> str:
+    return "Okay, nothing was changed. The request is still pending."
+
+
 def render_request(reservation: Reservation, spaces_left: int, note: str) -> str:
     return (
         f"New reservation request {reservation.reference}\n"
@@ -68,8 +110,8 @@ def render_request(reservation: Reservation, spaces_left: int, note: str) -> str
         f"Departure: {display_time(reservation.end_time)}\n"
         f"Reservable spaces left for this period: {spaces_left}\n"
         f"Note: {note.strip()}\n\n"
-        'Reply to this message with your decision, for example "approve" '
-        'or "reject, the garage is closed that day".'
+        "Tap Approve or Reject below. If you reject, I will ask for the reason. You can also "
+        'reply in words, for example "approve" or "reject, the garage is closed that day".'
     )
 
 
@@ -86,8 +128,9 @@ def render_pending_list(pending: Sequence[Reservation]) -> str:
 def render_admin_help() -> str:
     return (
         "I forward reservation requests from the customer assistant.\n"
-        'Reply to a request with your decision, for example "approve" or '
-        '"reject, no spaces that day". Send /pending to list open requests.'
+        "Tap Approve or Reject under a request (I ask for the reason when you reject). You can "
+        'also reply in words, for example "approve" or "reject, no spaces that day". '
+        "Send /pending to list open requests."
     )
 
 

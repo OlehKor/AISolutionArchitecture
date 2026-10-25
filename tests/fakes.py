@@ -4,7 +4,7 @@ from datetime import datetime
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
 
-from parking_assistant.approval import AdminDeliveryError, Decision, IncomingMessage
+from parking_assistant.approval import AdminDeliveryError, ButtonPress, Decision, IncomingMessage
 from parking_assistant.archive import ArchiveError
 from parking_assistant.conversation import Route
 from parking_assistant.database import Reservation
@@ -107,21 +107,35 @@ class RecordingChannel:
 
     def __init__(self, incoming: list[list[IncomingMessage]] | None = None) -> None:
         self.sent: list[str] = []
+        self.buttons_for: list[str] = []
+        self.pressed: list[tuple[str, str]] = []
+        self.cleared: list[int] = []
+        self.clearing_fails = False
         self._incoming = deque(incoming or [])
         self._next_id = 100
 
-    def send(self, text: str) -> int:
+    def send(self, text: str, decision_for: str = "") -> int:
         self.sent.append(text)
+        if decision_for:
+            self.buttons_for.append(decision_for)
         self._next_id += 1
         return self._next_id
 
-    def poll(self) -> list[IncomingMessage]:
+    def poll(self) -> list[IncomingMessage | ButtonPress]:
         if not self._incoming:
             raise AdminDeliveryError("no more messages")
         batch = self._incoming.popleft()
         if isinstance(batch, Exception):
             raise batch
         return batch
+
+    def answer_press(self, callback_id: str, text: str) -> None:
+        self.pressed.append((callback_id, text))
+
+    def clear_buttons(self, message_id: int) -> None:
+        if self.clearing_fails:
+            raise AdminDeliveryError("cannot edit")
+        self.cleared.append(message_id)
 
 
 class ScriptedAdministratorModel:

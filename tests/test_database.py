@@ -208,3 +208,13 @@ def test_reservations_approved_before_archiving_existed_are_queued(database_path
 
     assert [r.reference for r in migrated.unarchived_confirmations()] == ["PK-APPR01"]
     migrated.close()
+
+
+def test_request_message_id_is_looked_up_by_reference(database):
+    database.create_reservation(DRAFT, "PK-TEST01", NOW)
+
+    assert database.request_message_id_for("PK-TEST01") == 0
+    database.record_request_message("PK-TEST01", 321)
+
+    assert database.request_message_id_for("PK-TEST01") == 321
+    assert database.request_message_id_for("PK-NOPE00") == 0

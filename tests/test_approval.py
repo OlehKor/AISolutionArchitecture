@@ -1,6 +1,10 @@
 from parking_assistant.approval import (
+    button_data,
+    parse_button_data,
+    reason_from,
     render_decision_notice,
     render_pending_list,
+    render_reason_prompt,
     render_request,
     render_saved_without_delivery,
     render_status,
@@ -49,7 +53,7 @@ def test_request_message_contains_all_details_and_instructions():
 
     for expected in ("PK-AB12CD", "Anna Kowalska", "ABC123", "09:00", "17:30", "149", "routine"):
         assert expected in text
-    assert "Reply to this message" in text
+    assert "Tap Approve or Reject" in text
 
 
 def test_pending_list_names_each_request():
@@ -77,3 +81,24 @@ def test_status_lists_every_request_with_its_state():
 def test_submission_messages_mention_the_reference():
     assert "PK-AB12CD" in render_submitted("PK-AB12CD")
     assert "could not reach the administrator" in render_saved_without_delivery("PK-AB12CD")
+
+
+def test_button_data_round_trips_and_rejects_anything_else():
+    assert parse_button_data(button_data("approve", "PK-AB12CD")) == ("approve", "PK-AB12CD")
+    assert parse_button_data(button_data("reject", "PK-AB12CD")) == ("reject", "PK-AB12CD")
+    for forged in ("", "approve", "delete:PK-AB12CD", "approve:PK-ZZZZZZ", "approve:PK-AB12CD;x"):
+        assert parse_button_data(forged) == ("", "")
+
+
+def test_reason_is_trimmed_and_a_dash_means_no_reason():
+    assert reason_from("  closed   for\nan event ") == "closed for an event"
+    assert reason_from("-") == ""
+    assert len(reason_from("x" * 1000)) == 300
+
+
+def test_reason_prompt_explains_the_shortcuts():
+    prompt = render_reason_prompt("PK-AB12CD")
+
+    assert "PK-AB12CD" in prompt
+    assert "Send - to reject without a reason" in prompt
+    assert "/cancel" in prompt
