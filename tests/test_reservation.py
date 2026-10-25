@@ -175,6 +175,21 @@ def test_reply_is_not_used_when_the_model_only_repeated_known_details():
     assert result.last_name == "porol"
 
 
+def test_bare_name_the_model_put_in_the_wrong_field_goes_to_the_asked_field():
+    draft = ReservationDraft(active=True, first_name="Sure")
+
+    result = fill_pending_answer(draft, slot_updates(first_name="gomam"), "gomam")
+
+    assert (result.first_name, result.last_name) == ("", "gomam")
+
+
+def test_a_name_given_with_other_words_is_not_moved_between_fields():
+    draft = ReservationDraft(active=True, first_name="Sure")
+    updates = slot_updates(first_name="Anna")
+
+    assert fill_pending_answer(draft, updates, "actually my first name is Anna") == updates
+
+
 def test_reply_is_not_used_while_waiting_for_confirmation_or_dates():
     awaiting = replace(COMPLETE, awaiting_confirmation=True)
     needs_dates = ReservationDraft(active=True, first_name="A", last_name="B", car_number="ABC123")

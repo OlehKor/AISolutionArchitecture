@@ -15,6 +15,7 @@ MAX_STAY = timedelta(days=30)
 MAX_ADVANCE = timedelta(days=90)
 START_GRACE = timedelta(minutes=5)
 MAX_ANSWER_WORDS = {"first_name": 2, "last_name": 3, "car_number": 2}
+NAME_FIELD_PAIRS = {"first_name": "last_name", "last_name": "first_name"}
 NOT_AN_ANSWER = frozenset(
     {"yes", "no", "y", "n", "yeah", "yep", "nope", "ok", "okay", "cancel", "stop", "hi", "hello"}
 )
@@ -225,6 +226,14 @@ def fill_pending_answer(draft: ReservationDraft, updates: SlotUpdates, message: 
     known_date = {"start": draft.start_date, "end": draft.end_date}.get(pending, "")
     if known_date and bare_time(message):
         return updates.model_copy(update={pending: f"{known_date}T{bare_time(message)}"})
+    other_name = NAME_FIELD_PAIRS.get(pending, "")
+    if (
+        other_name
+        and not getattr(updates, pending)
+        and _plain(getattr(updates, other_name)) == _plain(message)
+        and _plain(message)
+    ):
+        return updates.model_copy(update={pending: message.strip(), other_name: ""})
     words = message.split()
     spoken = {word.casefold().strip(".,!") for word in words}
     if (
