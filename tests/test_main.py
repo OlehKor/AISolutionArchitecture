@@ -186,3 +186,31 @@ def test_mcp_server_command_serves_with_the_configured_settings(monkeypatch):
     cli.mcp_server(settings)
 
     assert started == [("x" * 32, settings.reservations_file, "127.0.0.1", 9999)]
+
+
+def test_chat_greets_the_customer_before_the_first_prompt(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "build_assistant", lambda settings: RecordingAssistant())
+    monkeypatch.setattr("builtins.input", lambda prompt="": "exit")
+
+    cli.chat(UNCONFIGURED)
+
+    output = capsys.readouterr().out
+    assert output.startswith("Assistant: Hello! I'm the SkyPark Central parking assistant.")
+    assert "reserve a parking space" in output
+
+
+@pytest.mark.parametrize(
+    ("command", "level"), [("chat", "WARNING"), ("admin", "INFO"), ("ingest", "INFO")]
+)
+def test_only_the_customer_chat_hides_informational_log_lines(monkeypatch, command, level):
+    configured: list[int] = []
+    monkeypatch.setattr(
+        cli.logging, "basicConfig", lambda **kwargs: configured.append(kwargs["level"])
+    )
+    monkeypatch.setattr(cli, "load_dotenv", lambda *args: None)
+    monkeypatch.setattr(cli, "get_settings", lambda: UNCONFIGURED)
+    monkeypatch.setattr(cli, command, lambda *args: None)
+
+    cli.main([command])
+
+    assert configured == [getattr(cli.logging, level)]

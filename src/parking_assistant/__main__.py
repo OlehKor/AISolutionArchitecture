@@ -35,6 +35,11 @@ from parking_assistant.models import build_embeddings
 
 logger = logging.getLogger("parking_assistant")
 EXIT_WORDS = {"exit", "quit"}
+GREETING = (
+    "Hello! I'm the SkyPark Central parking assistant. I can answer questions about the garage "
+    "(opening hours, prices, location, services) and reserve a parking space for you. "
+    "How can I help? (Type 'exit' to leave.)"
+)
 DECISION_CHECK_SECONDS = 3
 
 
@@ -63,10 +68,6 @@ def announce_decisions(
 def chat(settings: Settings) -> None:
     if not settings.telegram_configured:
         logger.warning("Telegram is not configured: reservation requests will stay pending.")
-    else:
-        logger.info(
-            "Decisions are applied only while `parking-assistant admin` runs in another terminal."
-        )
     assistant = build_assistant(settings)
     session_id = str(uuid4())
     stop = threading.Event()
@@ -75,7 +76,7 @@ def chat(settings: Settings) -> None:
         args=(assistant, session_id, lambda: build_database(settings), stop),
         daemon=True,
     ).start()
-    print("SkyPark Central assistant. Type 'exit' to leave.")
+    print(f"Assistant: {GREETING}")
     try:
         while True:
             try:
@@ -172,7 +173,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    level = logging.WARNING if args.command == "chat" else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s %(message)s")
     logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
     # Milvus Lite does not implement AllocTimestamp; pymilvus falls back, but grpc logs it as ERROR.
     logging.getLogger("grpc._server").setLevel(logging.CRITICAL)
@@ -180,7 +183,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpx2").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    args = parse_args(sys.argv[1:] if argv is None else argv)
     load_dotenv(PROJECT_ROOT / ".env")
     settings = get_settings()
     if args.command == "chat":

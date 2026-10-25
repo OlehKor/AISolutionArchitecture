@@ -9,10 +9,12 @@ from parking_assistant.reservation import (
     Step,
     advance,
     apply_updates,
+    bare_time,
     fill_pending_answer,
     missing_fields,
     normalize_car_number,
     normalize_name,
+    pending_question,
     period_problem,
     render_question,
     render_summary,
@@ -185,8 +187,112 @@ def test_the_message_that_starts_a_reservation_is_not_taken_as_an_answer():
     assert fill_pending_answer(ReservationDraft(), slot_updates(), "book") == slot_updates()
 
 
-def test_date_without_a_time_is_rejected_with_a_request_for_the_time():
-    updated, problems = apply_updates(ReservationDraft(), slot_updates(start="2026-11-01"), NOW)
+def test_date_without_a_time_is_remembered_and_only_the_time_is_asked_for():
+    outcome = advance(
+        ReservationDraft(first_name="A", last_name="B", car_number="ABC123"),
+        slot_updates(start="2026-11-01"),
+        NOW,
+    )
 
-    assert updated.start == ""
-    assert problems == ("Please give the time as well as the date, for example 09:00.",)
+    assert outcome.step is Step.ASK
+    assert outcome.problems == ()
+    assert (outcome.draft.start, outcome.draft.start_date) == ("", "2026-11-01")
+    assert render_question(outcome.draft) == "What time will you arrive on Sun 01 Nov 2026?"
+    assert pending_question(outcome.draft) == "What time will you arrive on Sun 01 Nov 2026?"
+
+
+def test_a_bare_time_is_joined_with_the_remembered_date():
+    draft = ReservationDraft(
+        active=True, first_name="A", last_name="B", car_number="ABC123", start_date="2026-11-01"
+    )
+
+    updates = fill_pending_answer(draft, slot_updates(), "10:30")
+    outcome = advance(draft, updates, NOW)
+
+    assert (outcome.draft.start, outcome.draft.start_date) == ("2026-11-01T10:30", "")
+    assert pending_question(outcome.draft) == "When will you leave? Please give the date and time."
+
+
+def test_the_model_can_also_join_date_and_time_itself():
+    draft = ReservationDraft(
+        active=True, first_name="A", last_name="B", car_number="ABC123", start_date="2026-11-01"
+    )
+
+    outcome = advance(draft, slot_updates(start="2026-11-01T09:00"), NOW)
+
+    assert outcome.draft.start == "2026-11-01T09:00"
+    assert outcome.draft.start_date == ""
+
+
+def test_departure_date_without_a_time_is_remembered_too():
+    draft = ReservationDraft(
+        active=True, first_name="A", last_name="B", car_number="ABC123", start="2026-11-01T09:00"
+    )
+
+    outcome = advance(draft, slot_updates(end="2026-11-03"), NOW)
+
+    assert pending_question(outcome.draft) == "What time will you leave on Tue 03 Nov 2026?"
+    finished = advance(
+        outcome.draft, fill_pending_answer(outcome.draft, slot_updates(), "5pm"), NOW
+    )
+    assert finished.step is Step.CONFIRM
+    assert finished.draft.end == "2026-11-03T17:00"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("9", "09:00"),
+        ("09:30", "09:30"),
+        ("at 14.15", "14:15"),
+        ("5pm", "17:00"),
+        ("12 am", "00:00"),
+        ("12pm.", "12:00"),
+        ("25:00", ""),
+        ("10:75", ""),
+        ("13pm", ""),
+        ("tomorrow", ""),
+        ("2026", ""),
+        ("9 to 5", ""),
+    ],
+)
+def test_bare_time_recognises_only_clock_times(message, expected):
+    assert bare_time(message) == expected
+
+
+def test_a_new_date_replaces_a_complete_arrival_and_asks_for_its_time():
+    draft = replace(COMPLETE, awaiting_confirmation=True)
+
+    outcome = advance(draft, slot_updates(start="2026-11-05"), NOW)
+
+    assert outcome.step is Step.ASK
+    assert (outcome.draft.start, outcome.draft.start_date) == ("", "2026-11-05")
+
+
+@pytest.mark.parametrize(
+    ("updates", "problem"),
+    [
+        ({"start": "2026-10-23"}, "The arrival date is in the past."),
+        ({"start": "2027-06-01"}, "Reservations can be made at most 90 days ahead."),
+        ({"end": "2026-10-23"}, "The departure date is in the past."),
+    ],
+)
+def test_impossible_dates_are_explained_instead_of_remembered(updates, problem):
+    result, problems = apply_updates(ReservationDraft(), slot_updates(**updates), NOW)
+
+    assert problems == (problem,)
+    assert result.start_date == result.end_date == ""
+
+
+def test_a_departure_date_before_the_arrival_date_is_refused():
+    draft = ReservationDraft(active=True, start_date="2026-11-05")
+
+    _, problems = apply_updates(draft, slot_updates(end="2026-11-03"), NOW)
+
+    assert problems == ("The departure must be after the arrival.",)
+
+
+def test_unparseable_date_is_reported():
+    _, problems = apply_updates(ReservationDraft(), slot_updates(start="2026-13-45"), NOW)
+
+    assert problems == ("I could not understand the date '2026-13-45'.",)

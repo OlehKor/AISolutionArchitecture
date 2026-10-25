@@ -82,3 +82,16 @@ def test_llm_model_formats_all_prompts_and_parses_structured_output():
     answer = model.answer([], "Where are you?", [], "", now)
     assert type(answer) is str
     assert answer == "stub reply"
+
+
+def test_known_dates_without_a_time_are_reported_to_the_model_and_asked_for():
+    draft = ReservationDraft(
+        active=True,
+        first_name="Anna",
+        last_name="Kowalska",
+        car_number="ABC123",
+        start_date="2026-11-01",
+    )
+
+    assert "arrival date=2026-11-01 (time still needed)" in describe_collected(draft)
+    assert describe_pending_question(draft) == "What time will you arrive on Sun 01 Nov 2026?"

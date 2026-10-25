@@ -300,3 +300,46 @@ def test_announcements_ignore_other_sessions_and_sessions_without_requests(datab
 
     assert assistant.announcements("stranger") == ""
     assert assistant.announcements("owner").startswith("Good news")
+
+
+def test_date_without_a_time_is_repeated_back_and_only_the_time_is_requested(database):
+    model = ScriptedModel(
+        [RESERVE] * 6,
+        [
+            slot_updates(first_name="Anna", last_name="Kowalska", car_number="ABC123"),
+            slot_updates(start="2026-11-01"),
+            slot_updates(),
+            slot_updates(end="2026-11-03"),
+            slot_updates(),
+        ],
+    )
+    assistant = make_assistant(model, database)
+
+    assistant.reply("s1", "I want to book, Anna Kowalska, ABC123")
+    after_date = assistant.reply("s1", "2026-11-01")
+    after_time = assistant.reply("s1", "10:00")
+    after_end_date = assistant.reply("s1", "2026-11-03")
+    summary = assistant.reply("s1", "5pm")
+
+    assert after_date == "What time will you arrive on Sun 01 Nov 2026?"
+    assert after_time == "When will you leave? Please give the date and time."
+    assert after_end_date == "What time will you leave on Tue 03 Nov 2026?"
+    assert "Arrival: Sun 01 Nov 2026, 10:00" in summary
+    assert "Departure: Tue 03 Nov 2026, 17:00" in summary
+
+
+def test_side_question_while_a_time_is_missing_repeats_the_date_aware_question(database):
+    model = ScriptedModel(
+        [RESERVE, INFO],
+        [
+            slot_updates(
+                first_name="Anna", last_name="Kowalska", car_number="ABC123", start="2026-11-01"
+            )
+        ],
+    )
+    assistant = make_assistant(model, database)
+
+    assistant.reply("s1", "Book for Anna Kowalska ABC123 on 2026-11-01")
+    reply = assistant.reply("s1", "Can I stay overnight?")
+
+    assert reply.endswith("Back to your reservation: What time will you arrive on Sun 01 Nov 2026?")

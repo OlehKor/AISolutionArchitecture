@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 FIELD_ORDER = ("first_name", "last_name", "car_number", "start", "end")
 TIME_FORMAT = "%Y-%m-%dT%H:%M"
 DISPLAY_FORMAT = "%a %d %b %Y, %H:%M"
+DATE_FORMAT = "%a %d %b %Y"
 MAX_STAY = timedelta(days=30)
 MAX_ADVANCE = timedelta(days=90)
 START_GRACE = timedelta(minutes=5)
@@ -20,6 +21,7 @@ NOT_AN_ANSWER = frozenset(
 
 NAME_PATTERN = re.compile(r"[^\W\d_]+(?:[ '\-][^\W\d_]+)*")
 PLATE_PATTERN = re.compile(r"[A-Z0-9]{3,10}")
+TIME_ONLY_PATTERN = re.compile(r"(?:at\s+)?(\d{1,2})(?:[:.h](\d{2}))?\s*(am|pm)?", re.IGNORECASE)
 
 QUESTIONS = {
     "first_name": "What is your first name?",
@@ -60,6 +62,8 @@ class ReservationDraft:
     end: str = ""
     awaiting_confirmation: bool = False
     active: bool = False
+    start_date: str = ""
+    end_date: str = ""
 
 
 class Step(Enum):
@@ -127,18 +131,49 @@ def period_problem(start: str, end: str, now: datetime) -> str:
     return ""
 
 
+def _split_moment(raw: str) -> tuple[str, str]:
+    """Split a value from the model into (date and time, date only); one of them is empty."""
+    if not raw:
+        return "", ""
+    if len(raw.strip()) <= len("YYYY-MM-DD"):
+        try:
+            return "", datetime.fromisoformat(raw.strip()).strftime("%Y-%m-%d")
+        except ValueError as error:
+            raise InvalidSlotError(f"I could not understand the date '{raw}'.") from error
+    return format_time(parse_time(raw)), ""
+
+
+def date_problem(start_date: str, end_date: str, start: str, now: datetime) -> str:
+    """Like `period_problem` for a date whose time is still unknown."""
+    today = now.strftime("%Y-%m-%d")
+    horizon = (now + MAX_ADVANCE).strftime("%Y-%m-%d")
+    if start_date and start_date < today:
+        return "The arrival date is in the past."
+    if start_date and start_date > horizon:
+        return f"Reservations can be made at most {MAX_ADVANCE.days} days ahead."
+    if end_date and end_date < today:
+        return "The departure date is in the past."
+    if end_date and end_date < (start_date or start[:10]):
+        return "The departure must be after the arrival."
+    return ""
+
+
 def _apply_period(
     draft: ReservationDraft, updates: SlotUpdates, now: datetime
 ) -> tuple[ReservationDraft, tuple[str, ...]]:
     try:
-        start = format_time(parse_time(updates.start)) if updates.start else draft.start
-        end = format_time(parse_time(updates.end)) if updates.end else draft.end
+        new_start, new_start_date = _split_moment(updates.start)
+        new_end, new_end_date = _split_moment(updates.end)
     except InvalidSlotError as error:
         return draft, (str(error),)
-    problem = period_problem(start, end, now)
+    start = new_start or ("" if new_start_date else draft.start)
+    end = new_end or ("" if new_end_date else draft.end)
+    start_date = new_start_date or ("" if new_start else draft.start_date)
+    end_date = new_end_date or ("" if new_end else draft.end_date)
+    problem = period_problem(start, end, now) or date_problem(start_date, end_date, start, now)
     if problem:
         return draft, (problem,)
-    return replace(draft, start=start, end=end), ()
+    return replace(draft, start=start, end=end, start_date=start_date, end_date=end_date), ()
 
 
 def _apply_text_field(
@@ -164,13 +199,32 @@ def _adds_information(draft: ReservationDraft, updates: SlotUpdates) -> bool:
     )
 
 
-def fill_pending_answer(draft: ReservationDraft, updates: SlotUpdates, message: str) -> SlotUpdates:
-    """Take a short plain reply as the answer to the pending name or plate question.
+def bare_time(message: str) -> str:
+    """Return HH:MM when the whole message is just a clock time such as 9, 09:30 or 5pm."""
+    found = TIME_ONLY_PATTERN.fullmatch(message.strip().rstrip(".!"))
+    if not found:
+        return ""
+    hour, minute, meridiem = int(found[1]), int(found[2] or 0), (found[3] or "").lower()
+    if meridiem:
+        if not 1 <= hour <= 12:
+            return ""
+        hour = hour % 12 + (12 if meridiem == "pm" else 0)
+    if hour > 23 or minute > 59:
+        return ""
+    return f"{hour:02d}:{minute:02d}"
 
-    The language model sometimes returns nothing for unusual words such as an unfamiliar name.
+
+def fill_pending_answer(draft: ReservationDraft, updates: SlotUpdates, message: str) -> SlotUpdates:
+    """Take a short plain reply as the answer to the pending question.
+
+    The language model sometimes returns nothing for unusual words such as an unfamiliar name,
+    and a bare time has to be joined with the date that was already given.
     """
     missing = missing_fields(draft)
     pending = missing[0] if draft.active and missing and not draft.awaiting_confirmation else ""
+    known_date = {"start": draft.start_date, "end": draft.end_date}.get(pending, "")
+    if known_date and bare_time(message):
+        return updates.model_copy(update={pending: f"{known_date}T{bare_time(message)}"})
     words = message.split()
     spoken = {word.casefold().strip(".,!") for word in words}
     if (
@@ -222,6 +276,20 @@ def display_time(value: str) -> str:
     return parse_time(value).strftime(DISPLAY_FORMAT)
 
 
+def display_date(value: str) -> str:
+    return datetime.fromisoformat(value).strftime(DATE_FORMAT)
+
+
+def pending_question(draft: ReservationDraft) -> str:
+    """The next question, asking only for the time when the date is already known."""
+    field = missing_fields(draft)[0]
+    known_date = {"start": draft.start_date, "end": draft.end_date}.get(field, "")
+    if known_date:
+        verb = "arrive" if field == "start" else "leave"
+        return f"What time will you {verb} on {display_date(known_date)}?"
+    return QUESTIONS[field]
+
+
 def _with_problems(problems: tuple[str, ...], text: str) -> str:
     return "\n".join([*problems, text]) if problems else text
 
@@ -229,7 +297,7 @@ def _with_problems(problems: tuple[str, ...], text: str) -> str:
 def render_question(
     draft: ReservationDraft, problems: tuple[str, ...] = (), introduce: bool = False
 ) -> str:
-    question = QUESTIONS[missing_fields(draft)[0]]
+    question = pending_question(draft)
     if introduce and not problems:
         question = f"I can reserve a space for you. I need a few details.\n{question}"
     return _with_problems(problems, question)
@@ -268,4 +336,4 @@ def render_pending_prompt(draft: ReservationDraft) -> str:
     missing = missing_fields(draft)
     if not missing:
         return "Back to your reservation: what would you like to change?"
-    return f"Back to your reservation: {QUESTIONS[missing[0]]}"
+    return f"Back to your reservation: {pending_question(draft)}"

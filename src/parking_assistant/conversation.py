@@ -11,10 +11,10 @@ from pydantic import BaseModel, Field
 from parking_assistant.knowledge import Passage
 from parking_assistant.reservation import (
     FIELD_ORDER,
-    QUESTIONS,
     ReservationDraft,
     SlotUpdates,
     missing_fields,
+    pending_question,
 )
 
 ROUTER_SYSTEM = """You route customer messages for the SkyPark Central parking garage assistant.
@@ -34,6 +34,7 @@ Current local date and time: {now:%A %Y-%m-%d %H:%M}.
 Convert dates and times to YYYY-MM-DDTHH:MM (24-hour, local time). Resolve relative expressions such as "tomorrow" or "next Friday" from the current date. If the customer states a date, including a relative one such as "tomorrow", without a clock time, return only the date (YYYY-MM-DD); never use the current time of day as the time. A time without a date means the nearest upcoming such time; for a departure it means the nearest such time after the arrival already collected.
 Details already collected: {collected}
 The assistant just asked: {pending_question}
+If an arrival or departure date is already collected and the customer now gives only a time, return that date and the time together as YYYY-MM-DDTHH:MM.
 Fill only what the customer states in this message and use an empty string for everything else. If the customer gives a full name, put the given name in first_name and the family name in last_name. If the assistant just asked for one detail, treat a short plain reply as that detail even when the value looks unusual (a name can be any word), but leave it empty for replies such as yes, no or a question. Set confirmation only when the assistant asked the customer to confirm the summary."""
 
 ANSWER_SYSTEM = """You are the virtual assistant of SkyPark Central, an underground parking garage.
@@ -85,14 +86,17 @@ def describe_reservation_state(draft: ReservationDraft) -> str:
 def describe_collected(draft: ReservationDraft) -> str:
     values = asdict(draft)
     collected = [f"{name}={values[name]}" for name in FIELD_ORDER if values[name]]
+    if draft.start_date:
+        collected.append(f"arrival date={draft.start_date} (time still needed)")
+    if draft.end_date:
+        collected.append(f"departure date={draft.end_date} (time still needed)")
     return ", ".join(collected) or "nothing yet"
 
 
 def describe_pending_question(draft: ReservationDraft) -> str:
     if draft.awaiting_confirmation:
         return "Shall I submit the reservation? (yes / no)"
-    missing = missing_fields(draft)
-    return QUESTIONS[missing[0]] if missing else "What would you like to change?"
+    return pending_question(draft) if missing_fields(draft) else "What would you like to change?"
 
 
 def format_context(passages: list[Passage]) -> str:
