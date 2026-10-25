@@ -89,17 +89,16 @@ class FakeVectorStore:
         return self._hits
 
 
-class RecordingAdministrator:
-    """Gateway stand-in that records escalations, optionally failing like an unreachable admin."""
+class RecordingWorkflow:
+    """Workflow stand-in that records started runs, optionally failing to reach the administrator."""
 
-    def __init__(self, unreachable: bool = False) -> None:
-        self.requests: list[Reservation] = []
-        self._unreachable = unreachable
+    def __init__(self, delivered: bool = True) -> None:
+        self.started: list[str] = []
+        self._delivered = delivered
 
-    def request_approval(self, reservation: Reservation) -> None:
-        if self._unreachable:
-            raise AdminDeliveryError("unreachable")
-        self.requests.append(reservation)
+    def start(self, reference: str) -> bool:
+        self.started.append(reference)
+        return self._delivered
 
 
 class RecordingChannel:
@@ -163,3 +162,18 @@ class RecordingArchive:
         if not self.available:
             raise ArchiveError("server down")
         self.archived.append(reservation)
+
+
+class RecordingDesk:
+    """Desk stand-in that records requests, optionally failing like an unreachable administrator."""
+
+    def __init__(self, database, reachable: bool = True) -> None:
+        self.requests: list[str] = []
+        self._database = database
+        self._reachable = reachable
+
+    def request_approval(self, reservation: Reservation) -> None:
+        if not self._reachable:
+            raise AdminDeliveryError("unreachable")
+        self.requests.append(reservation.reference)
+        self._database.record_request_message(reservation.reference, 500 + len(self.requests))

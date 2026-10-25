@@ -1,10 +1,12 @@
 import secrets
+from dataclasses import dataclass
 from datetime import datetime
 
 import httpx
 
 from parking_assistant.administrator import (
     AdminChannel,
+    AdminDesk,
     AdministratorAgent,
     LlmAdministratorModel,
 )
@@ -26,6 +28,7 @@ from parking_assistant.knowledge import (
 )
 from parking_assistant.models import build_chat_model, build_embeddings
 from parking_assistant.telegram import TelegramChannel, UnconfiguredChannel
+from parking_assistant.workflow import ReservationWorkflow, open_saver
 
 
 def build_guardrails(settings: Settings) -> Guardrails:
@@ -67,15 +70,44 @@ def build_archive(settings: Settings) -> ReservationArchive:
     return McpReservationArchive(settings.mcp_url, token)
 
 
-def build_administrator(settings: Settings, database: ParkingDatabase) -> AdministratorAgent:
-    return AdministratorAgent(
+def build_desk(settings: Settings, database: ParkingDatabase) -> AdminDesk:
+    return AdminDesk(
         model=LlmAdministratorModel(build_chat_model(settings)),
         channel=build_admin_channel(settings),
         database=database,
         clock=datetime.now,
-        admin_chat_id=settings.telegram_admin_chat_id,
-        archive=build_archive(settings),
     )
+
+
+def build_workflow(settings: Settings, database: ParkingDatabase) -> ReservationWorkflow:
+    return ReservationWorkflow(
+        database=database,
+        desk=build_desk(settings, database),
+        archive=build_archive(settings),
+        clock=datetime.now,
+        saver=open_saver(settings.workflow_db),
+    )
+
+
+@dataclass(frozen=True)
+class AdminService:
+    """Everything the `admin` process needs: the outgoing desk, the listener and the workflow."""
+
+    desk: AdminDesk
+    agent: AdministratorAgent
+    workflow: ReservationWorkflow
+
+
+def build_admin_service(settings: Settings, database: ParkingDatabase) -> AdminService:
+    workflow = build_workflow(settings, database)
+    agent = AdministratorAgent(
+        model=LlmAdministratorModel(build_chat_model(settings)),
+        channel=build_admin_channel(settings),
+        database=database,
+        admin_chat_id=settings.telegram_admin_chat_id,
+        decisions=workflow,
+    )
+    return AdminService(build_desk(settings, database), agent, workflow)
 
 
 def build_assistant(settings: Settings) -> ParkingAssistant:
@@ -86,7 +118,7 @@ def build_assistant(settings: Settings) -> ParkingAssistant:
             knowledge=build_knowledge(settings),
             database=database,
             guardrails=build_guardrails(settings),
-            administrator=build_administrator(settings, database),
+            workflow=build_workflow(settings, database),
             clock=datetime.now,
             new_reference=new_reservation_reference,
             history_messages=settings.history_messages,

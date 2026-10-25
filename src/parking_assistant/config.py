@@ -41,7 +41,10 @@ class Settings(BaseSettings):
     mcp_host: str = "127.0.0.1"
     mcp_port: int = 8765
     mcp_token: SecretStr = SecretStr("")
+    mcp_server_url: str = ""
+    mcp_allowed_hosts: str = ""
     reservations_file: Path = PROJECT_ROOT / "var" / "confirmed_reservations.txt"
+    workflow_db: Path = PROJECT_ROOT / "var" / "workflow.sqlite"
 
     public_contacts: tuple[str, ...] = Field(
         default=("+370 5 210 4455", "info@skypark-central.com"),
@@ -50,7 +53,11 @@ class Settings(BaseSettings):
 
     @property
     def mcp_url(self) -> str:
-        return f"http://{self.mcp_host}:{self.mcp_port}/mcp"
+        return self.mcp_server_url or f"http://{self.mcp_host}:{self.mcp_port}/mcp"
+
+    @property
+    def mcp_extra_hosts(self) -> tuple[str, ...]:
+        return tuple(host.strip() for host in self.mcp_allowed_hosts.split(",") if host.strip())
 
     @property
     def telegram_token_set(self) -> bool:

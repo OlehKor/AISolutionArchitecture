@@ -25,16 +25,14 @@ from parking_assistant.approval import (
     render_unknown_reference,
     resolve_target,
 )
-from parking_assistant.archive import ArchiveError, ReservationArchive
 from parking_assistant.database import (
-    CONFIRMED,
     PENDING,
-    REJECTED,
     ParkingDatabase,
     Reservation,
     UnknownReservationError,
 )
 from parking_assistant.reservation import display_time
+from parking_assistant.workflow import DecisionResult
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +101,16 @@ class LlmAdministratorModel:
         )
 
 
-class AdministratorAgent:
-    """Second agent: asks the administrator to approve requests and applies the answers."""
+class DecisionSink(Protocol):
+    """Where the agent sends the human's decision: the reservation workflow."""
+
+    def decide(self, reference: str, verdict: str, reason: str) -> DecisionResult: ...
+
+    def retry_pending(self) -> int: ...
+
+
+class AdminDesk:
+    """Outgoing half of the second agent: writes an LLM note and sends the request with buttons."""
 
     def __init__(
         self,
@@ -112,16 +118,11 @@ class AdministratorAgent:
         channel: AdminChannel,
         database: ParkingDatabase,
         clock: Callable[[], datetime],
-        admin_chat_id: int,
-        archive: ReservationArchive,
     ) -> None:
         self._model = model
         self._channel = channel
         self._database = database
         self._clock = clock
-        self._admin_chat_id = admin_chat_id
-        self._archive = archive
-        self._rejecting = ""
 
     def request_approval(self, reservation: Reservation) -> None:
         spaces_left = self._database.free_reservable_spaces(
@@ -139,9 +140,24 @@ class AdministratorAgent:
             self.request_approval(reservation)
         return len(unsent)
 
-    def retry_archiving(self) -> int:
-        """Store confirmed reservations that could not be archived earlier."""
-        return sum(self._archive_confirmed(r) for r in self._database.unarchived_confirmations())
+
+class AdministratorAgent:
+    """Incoming half of the second agent: understands the administrator and feeds the workflow."""
+
+    def __init__(
+        self,
+        model: AdministratorModel,
+        channel: AdminChannel,
+        database: ParkingDatabase,
+        admin_chat_id: int,
+        decisions: DecisionSink,
+    ) -> None:
+        self._model = model
+        self._channel = channel
+        self._database = database
+        self._admin_chat_id = admin_chat_id
+        self._decisions = decisions
+        self._rejecting = ""
 
     def handle_admin_message(self, message: IncomingMessage) -> None:
         text = message.text.strip()
@@ -172,7 +188,7 @@ class AdministratorAgent:
         elif press.action == "approve":
             self._rejecting = ""
             self._channel.answer_press(press.callback_id, "Approved")
-            self._finish(reservation, CONFIRMED, "")
+            self._finish(reservation, "approve", "")
         else:
             self._rejecting = reservation.reference
             self._channel.answer_press(press.callback_id, "Type the reason")
@@ -196,18 +212,9 @@ class AdministratorAgent:
 
     def _retry_archiving_safely(self) -> None:
         try:
-            self.retry_archiving()
+            self._decisions.retry_pending()
         except Exception:
             logger.exception("Could not retry archiving confirmed reservations")
-
-    def _archive_confirmed(self, reservation: Reservation) -> bool:
-        try:
-            self._archive.archive(reservation)
-        except ArchiveError as error:
-            logger.warning("Could not archive %s yet: %s", reservation.reference, error)
-            return False
-        self._database.mark_archived(reservation.reference)
-        return True
 
     def _handle_safely(self, event: IncomingMessage | ButtonPress) -> None:
         if event.chat_id != self._admin_chat_id:
@@ -227,7 +234,7 @@ class AdministratorAgent:
         if reservation.status != PENDING:
             self._channel.send(render_already_decided(reservation))
             return
-        self._finish(reservation, REJECTED, reason_from(text))
+        self._finish(reservation, "reject", reason_from(text))
 
     def _clear_buttons(self, reference: str) -> None:
         message_id = self._database.request_message_id_for(reference)
@@ -238,14 +245,13 @@ class AdministratorAgent:
         except AdminDeliveryError as error:
             logger.warning("Could not remove the buttons from %s: %s", reference, error)
 
-    def _finish(self, reservation: Reservation, status: str, reason: str) -> None:
-        if not self._database.decide(reservation.reference, status, reason, self._clock()):
-            current = self._database.get_reservation(reservation.reference)
+    def _finish(self, reservation: Reservation, verdict: str, reason: str) -> None:
+        result = self._decisions.decide(reservation.reference, verdict, reason)
+        current = self._database.get_reservation(reservation.reference)
+        if not result.applied:
             self._channel.send(render_already_decided(current))
             return
-        decided = self._database.get_reservation(reservation.reference)
-        archived = status != CONFIRMED or self._archive_confirmed(decided)
-        self._channel.send(render_decision_ack(decided, archived))
+        self._channel.send(render_decision_ack(current, result.archived))
         self._clear_buttons(reservation.reference)
 
     def _decide(self, message: IncomingMessage, text: str) -> None:
@@ -267,5 +273,4 @@ class AdministratorAgent:
         if decision.verdict == "unclear":
             self._channel.send(render_clarification(reservation.reference))
             return
-        status = CONFIRMED if decision.verdict == "approve" else REJECTED
-        self._finish(reservation, status, decision.reason)
+        self._finish(reservation, decision.verdict, decision.reason)

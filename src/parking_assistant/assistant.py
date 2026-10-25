@@ -2,7 +2,7 @@ import operator
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Annotated, Protocol, TypedDict
+from typing import Annotated, Protocol, TypedDict, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -11,7 +11,6 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from parking_assistant.approval import (
-    AdminDeliveryError,
     render_decision_notice,
     render_saved_without_delivery,
     render_status,
@@ -22,7 +21,6 @@ from parking_assistant.database import (
     PENDING,
     NoAvailabilityError,
     ParkingDatabase,
-    Reservation,
 )
 from parking_assistant.guardrails import REFUSALS, Guardrails
 from parking_assistant.knowledge import KnowledgeSearch, Passage
@@ -64,10 +62,11 @@ class ChatState(TypedDict, total=False):
     references: Annotated[list[str], operator.add]
 
 
-class AdministratorGateway(Protocol):
-    """How the first agent hands a reservation request over to the second agent."""
+class WorkflowStarter(Protocol):
+    """How the chat agent hands a submitted reservation to the approval workflow."""
 
-    def request_approval(self, reservation: Reservation) -> None: ...
+    def start(self, reference: str) -> bool:
+        """Start the run; False when the administrator could not be reached yet."""
 
 
 @dataclass(frozen=True)
@@ -76,7 +75,7 @@ class Dependencies:
     knowledge: KnowledgeSearch
     database: ParkingDatabase
     guardrails: Guardrails
-    administrator: AdministratorGateway
+    workflow: WorkflowStarter
     clock: Callable[[], datetime]
     new_reference: Callable[[], str]
     history_messages: int
@@ -168,12 +167,9 @@ def build_graph(deps: Dependencies) -> StateGraph:
         }
 
     def escalate(state: ChatState) -> dict:
-        reservation = deps.database.get_reservation(state["submitted"])
-        try:
-            deps.administrator.request_approval(reservation)
-        except AdminDeliveryError:
-            return {"reply": render_saved_without_delivery(reservation.reference)}
-        return {}
+        if deps.workflow.start(state["submitted"]):
+            return {}
+        return {"reply": render_saved_without_delivery(state["submitted"])}
 
     def report_status(state: ChatState) -> dict:
         reservations = deps.database.reservations(state.get("references", []))
@@ -231,6 +227,11 @@ def build_graph(deps: Dependencies) -> StateGraph:
         graph.add_edge(node, "finalize")
     graph.add_edge("finalize", END)
     return graph
+
+
+def conversation_diagram() -> str:
+    """Mermaid source of the chat graph; nothing runs, so no dependencies are needed."""
+    return build_graph(cast(Dependencies, None)).compile().get_graph().draw_mermaid()
 
 
 class ParkingAssistant:

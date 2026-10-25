@@ -1,9 +1,4 @@
-import socket
-import threading
-import time
-
 import pytest
-import uvicorn
 from starlette.testclient import TestClient
 
 from fakes import NOW
@@ -11,7 +6,9 @@ from parking_assistant.archive import ArchiveError, McpReservationArchive
 from parking_assistant.database import CONFIRMED, Reservation
 from parking_assistant.mcp_server import (
     FailureThrottle,
+    background_server,
     build_app,
+    free_port,
     has_valid_token,
 )
 
@@ -40,29 +37,11 @@ def confirmed(**overrides) -> Reservation:
     return Reservation(**{**values, **overrides})
 
 
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
 @pytest.fixture
 def server(tmp_path):
-    port = free_port()
     path = tmp_path / "confirmed.txt"
-    config = uvicorn.Config(
-        build_app(TOKEN, path, "127.0.0.1", port), host="127.0.0.1", port=port, log_level="error"
-    )
-    instance = uvicorn.Server(config)
-    thread = threading.Thread(target=instance.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 10
-    while not instance.started and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert instance.started
-    yield f"http://127.0.0.1:{port}/mcp", path
-    instance.should_exit = True
-    thread.join(timeout=10)
+    with background_server(TOKEN, path) as url:
+        yield url, path
 
 
 def test_throttle_blocks_a_client_after_too_many_failures_and_recovers():
@@ -173,3 +152,20 @@ def test_unreachable_server_is_retried_then_reported():
         archive.archive(confirmed())
 
     assert pauses == [1, 1]
+
+
+def test_extra_hosts_are_accepted_by_the_host_header_check(tmp_path):
+    app = build_app(TOKEN, tmp_path / "c.txt", "0.0.0.0", 8765, extra_hosts=("mcp",))
+    headers = {
+        "Authorization": f"Bearer {TOKEN}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    body = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+    with TestClient(app) as client:
+        allowed = client.post("/mcp", json=body, headers={**headers, "Host": "mcp:8765"})
+        stranger = client.post("/mcp", json=body, headers={**headers, "Host": "evil.example:8765"})
+
+    assert allowed.status_code != 421
+    assert stranger.status_code == 421

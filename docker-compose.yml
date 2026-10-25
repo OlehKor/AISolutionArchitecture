@@ -1,0 +1,58 @@
+# Run the whole system:   docker compose up -d --build        (MCP server + administrator agent)
+# Talk to the assistant:  docker compose run --rm chat
+# Secrets come from .env (see .env.example); they are never baked into the image.
+
+x-app: &app
+  image: parking-assistant:latest
+  build: .
+  env_file: .env
+  restart: unless-stopped
+
+name: parking-assistant
+
+services:
+  mcp:
+    <<: *app
+    command: ["mcp-server"]
+    environment:
+      PARKING_MCP_HOST: 0.0.0.0
+      PARKING_MCP_ALLOWED_HOSTS: mcp
+      PARKING_RESERVATIONS_FILE: /data/confirmed_reservations.txt
+    volumes:
+      - reservations:/data
+    ports:
+      - "127.0.0.1:8765:8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  admin:
+    <<: *app
+    command: ["admin"]
+    environment:
+      PARKING_MCP_SERVER_URL: http://mcp:8765/mcp
+    volumes:
+      - state:/app/var
+    depends_on:
+      mcp:
+        condition: service_healthy
+
+  chat:
+    <<: *app
+    command: ["chat"]
+    profiles: ["chat"]
+    restart: "no"
+    stdin_open: true
+    tty: true
+    environment:
+      PARKING_MCP_SERVER_URL: http://mcp:8765/mcp
+    volumes:
+      - state:/app/var
+    depends_on:
+      - admin
+
+volumes:
+  reservations:
+  state:

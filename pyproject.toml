@@ -1,6 +1,6 @@
 [project]
 name = "parking-assistant"
-version = "0.3.0"
+version = "0.4.0"
 description = "RAG chatbot for a parking garage: information, reservations, guard rails, evaluation."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -10,6 +10,7 @@ dependencies = [
     "langchain-milvus>=0.2",
     "langchain-text-splitters>=0.3",
     "langgraph>=0.4",
+    "langgraph-checkpoint-sqlite>=2.0",
     "pymilvus[milvus_lite]>=2.5",
     "fastembed>=0.5",
     "presidio-analyzer>=2.2",

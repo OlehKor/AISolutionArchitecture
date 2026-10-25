@@ -2,12 +2,14 @@ from datetime import datetime
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
+from langgraph.checkpoint.memory import InMemorySaver
 
 from fakes import NOW, RecordingArchive, RecordingChannel, ScriptedAdministratorModel
-from parking_assistant.administrator import AdministratorAgent, LlmAdministratorModel
+from parking_assistant.administrator import AdminDesk, AdministratorAgent, LlmAdministratorModel
 from parking_assistant.approval import AdminDeliveryError, ButtonPress, Decision, IncomingMessage
 from parking_assistant.database import CONFIRMED, PENDING, REJECTED
 from parking_assistant.reservation import ReservationDraft
+from parking_assistant.workflow import ReservationWorkflow
 
 ADMIN_CHAT = 42
 APPROVE = Decision(verdict="approve", reason="")
@@ -29,12 +31,33 @@ def message(text: str, reply_to: int = 0, chat_id: int = ADMIN_CHAT) -> Incoming
     return IncomingMessage(chat_id=chat_id, text=text, reply_to_message_id=reply_to)
 
 
+class Harness:
+    """The real desk, workflow and agent wired together, with the pre-workflow call names."""
+
+    def __init__(self, agent, desk, workflow) -> None:
+        self.agent, self.desk, self.workflow = agent, desk, workflow
+
+    def __getattr__(self, name):
+        return getattr(self.agent, name)
+
+    def request_approval(self, reservation):
+        return self.workflow.start(reservation.reference)
+
+    def resend_unsent(self):
+        return self.desk.resend_unsent()
+
+    def retry_archiving(self):
+        return self.workflow.retry_pending()
+
+
 def make_agent(database, channel=None, model=None, archive=None):
     channel = channel or RecordingChannel()
     model = model or ScriptedAdministratorModel()
     archive = archive or RecordingArchive()
-    agent = AdministratorAgent(model, channel, database, lambda: NOW, ADMIN_CHAT, archive)
-    return agent, channel, model
+    desk = AdminDesk(model, channel, database, lambda: NOW)
+    workflow = ReservationWorkflow(database, desk, archive, lambda: NOW, InMemorySaver())
+    agent = AdministratorAgent(model, channel, database, ADMIN_CHAT, workflow)
+    return Harness(agent, desk, workflow), channel, model
 
 
 def submit(database, agent, reference="PK-TEST01", car="ABC123"):

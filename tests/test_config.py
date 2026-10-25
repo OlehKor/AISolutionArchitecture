@@ -45,3 +45,15 @@ def test_mcp_defaults_are_local_and_the_token_is_hidden():
     assert settings.mcp_url == "http://127.0.0.1:8765/mcp"
     assert settings.reservations_file.name == "confirmed_reservations.txt"
     assert "super-secret-token" not in repr(settings)
+
+
+def test_the_mcp_url_can_be_overridden_for_containers_and_extra_hosts_are_split():
+    default = Settings(mcp_token=SecretStr("x"))
+    container = Settings(
+        mcp_server_url="http://mcp:8765/mcp", mcp_allowed_hosts=" mcp , parking.internal ,"
+    )
+
+    assert default.mcp_url == "http://127.0.0.1:8765/mcp"
+    assert default.mcp_extra_hosts == ()
+    assert container.mcp_url == "http://mcp:8765/mcp"
+    assert container.mcp_extra_hosts == ("mcp", "parking.internal")

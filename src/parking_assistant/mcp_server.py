@@ -1,8 +1,11 @@
 import hmac
 import logging
+import socket
+import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import uvicorn
@@ -22,6 +25,7 @@ MAX_BODY_BYTES = 8 * 1024
 FAILURE_LIMIT = 10
 FAILURE_WINDOW_SECONDS = 60
 HEALTH_PATH = "/health"
+STARTUP_SECONDS = 10
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 
@@ -90,7 +94,9 @@ class BearerAuthMiddleware:
         await self._app(scope, receive, send)
 
 
-def build_mcp_server(reservations: ReservationFile, host: str, port: int) -> FastMCP:
+def build_mcp_server(
+    reservations: ReservationFile, host: str, port: int, extra_hosts: tuple[str, ...] = ()
+) -> FastMCP:
     server = FastMCP(
         "reservation-archive",
         host=host,
@@ -100,7 +106,7 @@ def build_mcp_server(reservations: ReservationFile, host: str, port: int) -> Fas
         max_request_body_size=MAX_BODY_BYTES,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
-            allowed_hosts=[f"{name}:*" for name in (*LOOPBACK_HOSTS, host)],
+            allowed_hosts=[f"{name}:*" for name in (*LOOPBACK_HOSTS, host, *extra_hosts)],
             allowed_origins=[],
         ),
     )
@@ -129,16 +135,51 @@ def build_mcp_server(reservations: ReservationFile, host: str, port: int) -> Fas
     return server
 
 
-def build_app(token: str, reservations_path: Path, host: str, port: int) -> Starlette:
+def build_app(
+    token: str, reservations_path: Path, host: str, port: int, extra_hosts: tuple[str, ...] = ()
+) -> Starlette:
     if len(token) < MIN_TOKEN_LENGTH:
         raise ValueError(f"The MCP token must have at least {MIN_TOKEN_LENGTH} characters.")
-    server = build_mcp_server(ReservationFile(reservations_path), host, port)
+    server = build_mcp_server(ReservationFile(reservations_path), host, port, extra_hosts)
     app = server.streamable_http_app()
     app.add_middleware(BearerAuthMiddleware, token=token, throttle=FailureThrottle())
     return app
 
 
-def serve(token: str, reservations_path: Path, host: str, port: int) -> None:
+def serve(
+    token: str, reservations_path: Path, host: str, port: int, extra_hosts: tuple[str, ...] = ()
+) -> None:
     if host not in ("127.0.0.1", "localhost", "::1"):
         logger.warning("Listening on %s without TLS; put the server behind HTTPS.", host)
-    uvicorn.run(build_app(token, reservations_path, host, port), host=host, port=port)
+    app = build_app(token, reservations_path, host, port, extra_hosts)
+    uvicorn.run(app, host=host, port=port)
+
+
+def free_port(host: str = "127.0.0.1") -> int:
+    with socket.socket() as probe:
+        probe.bind((host, 0))
+        return probe.getsockname()[1]
+
+
+@contextmanager
+def background_server(
+    token: str, reservations_path: Path, host: str = "127.0.0.1"
+) -> Iterator[str]:
+    """Run the server in a thread for tests and load tests; yields its URL."""
+    port = free_port(host)
+    config = uvicorn.Config(
+        build_app(token, reservations_path, host, port), host=host, port=port, log_level="error"
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + STARTUP_SECONDS
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not server.started:
+        raise RuntimeError("The MCP server did not start in time")
+    try:
+        yield f"http://{host}:{port}/mcp"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=STARTUP_SECONDS)

@@ -19,3 +19,13 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t parking-assistant:ci .
+      - name: Image starts and runs as a non-root user
+        run: |
+          docker run --rm --entrypoint id parking-assistant:ci -u | grep -qx 1000
+          docker run --rm parking-assistant:ci graph | grep -q request_approval

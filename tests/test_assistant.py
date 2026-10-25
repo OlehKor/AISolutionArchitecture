@@ -1,7 +1,7 @@
 from fakes import (
     NOW,
     MaskingRedactor,
-    RecordingAdministrator,
+    RecordingWorkflow,
     ScriptedModel,
     StaticKnowledge,
     slot_updates,
@@ -28,7 +28,7 @@ PASSAGE = Passage("faq#overnight", "faq", "overnight", "Overnight parking is all
 
 
 def make_assistant(
-    model, database, redactor=None, knowledge=None, administrator=None
+    model, database, redactor=None, knowledge=None, workflow=None
 ) -> ParkingAssistant:
     return ParkingAssistant(
         Dependencies(
@@ -36,7 +36,7 @@ def make_assistant(
             knowledge=knowledge or StaticKnowledge([PASSAGE]),
             database=database,
             guardrails=Guardrails(redactor or MaskingRedactor()),
-            administrator=administrator or RecordingAdministrator(),
+            workflow=workflow or RecordingWorkflow(),
             clock=lambda: NOW,
             new_reference=lambda: "PK-TEST01",
             history_messages=6,
@@ -107,8 +107,8 @@ def test_answers_are_sanitized_before_they_are_returned(database):
 
 def test_reservation_is_collected_confirmed_and_sent_to_the_administrator(database):
     model = ScriptedModel(*BOOKING_MODEL_ARGS)
-    administrator = RecordingAdministrator()
-    assistant = make_assistant(model, database, administrator=administrator)
+    workflow = RecordingWorkflow()
+    assistant = make_assistant(model, database, workflow=workflow)
 
     first = assistant.reply("s1", "I want to book a space")
     summary = assistant.reply("s1", "Anna Kowalska, ABC123, tomorrow 9:00 to 17:30")
@@ -125,14 +125,12 @@ def test_reservation_is_collected_confirmed_and_sent_to_the_administrator(databa
         "2026-10-25T09:00",
         "pending",
     )
-    assert [r.reference for r in administrator.requests] == ["PK-TEST01"]
+    assert workflow.started == ["PK-TEST01"]
 
 
 def test_reservation_stays_pending_when_the_administrator_is_unreachable(database):
     model = ScriptedModel(*BOOKING_MODEL_ARGS)
-    assistant = make_assistant(
-        model, database, administrator=RecordingAdministrator(unreachable=True)
-    )
+    assistant = make_assistant(model, database, workflow=RecordingWorkflow(delivered=False))
 
     reply = book_a_space(assistant)
 
@@ -343,3 +341,12 @@ def test_side_question_while_a_time_is_missing_repeats_the_date_aware_question(d
     reply = assistant.reply("s1", "Can I stay overnight?")
 
     assert reply.endswith("Back to your reservation: What time will you arrive on Sun 01 Nov 2026?")
+
+
+def test_the_conversation_diagram_shows_the_hand_over_to_the_workflow():
+    from parking_assistant.assistant import conversation_diagram
+
+    diagram = conversation_diagram()
+
+    assert "reserve -.-> escalate" in diagram
+    assert "screen_input" in diagram
