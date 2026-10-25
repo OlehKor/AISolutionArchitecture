@@ -147,12 +147,17 @@ def build_app(
 
 
 def serve(
-    token: str, reservations_path: Path, host: str, port: int, extra_hosts: tuple[str, ...] = ()
+    token: str,
+    reservations_path: Path,
+    host: str,
+    port: int,
+    extra_hosts: tuple[str, ...] = (),
+    quiet: bool = False,
 ) -> None:
     if host not in ("127.0.0.1", "localhost", "::1"):
         logger.warning("Listening on %s without TLS; put the server behind HTTPS.", host)
     app = build_app(token, reservations_path, host, port, extra_hosts)
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, log_level="warning" if quiet else "info")
 
 
 def free_port(host: str = "127.0.0.1") -> int:

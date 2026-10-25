@@ -143,7 +143,7 @@ def admin(settings: Settings) -> None:
         logger.info("Administrator agent stopped")
 
 
-def mcp_server(settings: Settings) -> None:
+def mcp_server(settings: Settings, quiet: bool = False) -> None:
     try:
         serve(
             settings.mcp_token.get_secret_value(),
@@ -151,6 +151,7 @@ def mcp_server(settings: Settings) -> None:
             settings.mcp_host,
             settings.mcp_port,
             settings.mcp_extra_hosts,
+            quiet=quiet,
         )
     except ValueError as error:
         sys.exit(str(error))
@@ -165,7 +166,7 @@ def run_all(settings: Settings) -> None:
     """One terminal for everything: MCP server and administrator agent behind the chat."""
     token = settings.mcp_token.get_secret_value()
     if len(token) >= MIN_TOKEN_LENGTH:
-        threading.Thread(target=mcp_server, args=(settings,), daemon=True, name="mcp").start()
+        threading.Thread(target=mcp_server, args=(settings, True), daemon=True, name="mcp").start()
         print(f"MCP server started on {settings.mcp_url}")
     else:
         print(

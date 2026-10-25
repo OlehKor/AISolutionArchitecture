@@ -184,12 +184,30 @@ def test_mcp_server_command_refuses_a_missing_token():
 
 def test_mcp_server_command_serves_with_the_configured_settings(monkeypatch):
     started: list[tuple] = []
-    monkeypatch.setattr(cli, "serve", lambda *args: started.append(args))
+    monkeypatch.setattr(cli, "serve", lambda *args, **kwargs: started.append((*args, kwargs)))
     settings = Settings(mcp_token=SecretStr("x" * 32), mcp_port=9999)
 
     cli.mcp_server(settings)
 
-    assert started == [("x" * 32, settings.reservations_file, "127.0.0.1", 9999, ())]
+    assert started == [
+        ("x" * 32, settings.reservations_file, "127.0.0.1", 9999, (), {"quiet": False})
+    ]
+
+
+def test_run_command_starts_the_mcp_server_without_access_log_lines(monkeypatch):
+    started: list[tuple] = []
+    monkeypatch.setattr(cli, "serve", lambda *args, **kwargs: started.append(kwargs))
+    monkeypatch.setattr(cli, "chat", lambda settings: None)
+    settings = Settings(
+        mcp_token=SecretStr("x" * 32), telegram_bot_token=SecretStr(""), telegram_admin_chat_id=0
+    )
+
+    cli.run_all(settings)
+    for thread in threading.enumerate():
+        if thread.name == "mcp":
+            thread.join(timeout=5)
+
+    assert started == [{"quiet": True}]
 
 
 def test_chat_greets_the_customer_before_the_first_prompt(monkeypatch, capsys):
