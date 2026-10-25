@@ -21,6 +21,7 @@ from parking_assistant.approval import (
     render_unknown_reference,
     resolve_target,
 )
+from parking_assistant.archive import ArchiveError, ReservationArchive
 from parking_assistant.database import (
     CONFIRMED,
     PENDING,
@@ -102,12 +103,14 @@ class AdministratorAgent:
         database: ParkingDatabase,
         clock: Callable[[], datetime],
         admin_chat_id: int,
+        archive: ReservationArchive,
     ) -> None:
         self._model = model
         self._channel = channel
         self._database = database
         self._clock = clock
         self._admin_chat_id = admin_chat_id
+        self._archive = archive
 
     def request_approval(self, reservation: Reservation) -> None:
         spaces_left = self._database.free_reservable_spaces(
@@ -122,6 +125,10 @@ class AdministratorAgent:
         for reservation in unsent:
             self.request_approval(reservation)
         return len(unsent)
+
+    def retry_archiving(self) -> int:
+        """Store confirmed reservations that could not be archived earlier."""
+        return sum(self._archive_confirmed(r) for r in self._database.unarchived_confirmations())
 
     def handle_admin_message(self, message: IncomingMessage) -> None:
         text = message.text.strip()
@@ -138,6 +145,7 @@ class AdministratorAgent:
         pause: Callable[[float], None] = time.sleep,
     ) -> None:
         while not should_stop():
+            self._retry_archiving_safely()
             try:
                 messages = self._channel.poll()
             except AdminDeliveryError as error:
@@ -146,6 +154,21 @@ class AdministratorAgent:
                 continue
             for message in messages:
                 self._handle_safely(message)
+
+    def _retry_archiving_safely(self) -> None:
+        try:
+            self.retry_archiving()
+        except Exception:
+            logger.exception("Could not retry archiving confirmed reservations")
+
+    def _archive_confirmed(self, reservation: Reservation) -> bool:
+        try:
+            self._archive.archive(reservation)
+        except ArchiveError as error:
+            logger.warning("Could not archive %s yet: %s", reservation.reference, error)
+            return False
+        self._database.mark_archived(reservation.reference)
+        return True
 
     def _handle_safely(self, message: IncomingMessage) -> None:
         if message.chat_id != self._admin_chat_id:
@@ -177,9 +200,9 @@ class AdministratorAgent:
             return
         status = CONFIRMED if decision.verdict == "approve" else REJECTED
         if self._database.decide(reservation.reference, status, decision.reason, self._clock()):
-            self._channel.send(
-                render_decision_ack(self._database.get_reservation(reservation.reference))
-            )
+            decided = self._database.get_reservation(reservation.reference)
+            archived = status != CONFIRMED or self._archive_confirmed(decided)
+            self._channel.send(render_decision_ack(decided, archived))
         else:
             self._channel.send(
                 render_already_decided(self._database.get_reservation(reservation.reference))

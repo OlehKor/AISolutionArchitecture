@@ -30,6 +30,7 @@ from parking_assistant.evaluation import (
     write_report,
 )
 from parking_assistant.knowledge import ingest_static_data
+from parking_assistant.mcp_server import serve
 from parking_assistant.models import build_embeddings
 
 logger = logging.getLogger("parking_assistant")
@@ -110,10 +111,24 @@ def admin(settings: Settings) -> None:
     agent = build_administrator(settings, build_database(settings))
     resent = agent.resend_unsent()
     logger.info("Administrator agent is listening (%d unsent requests delivered)", resent)
+    if not settings.mcp_token.get_secret_value():
+        logger.warning("PARKING_MCP_TOKEN is not set: confirmed reservations will not be archived.")
     try:
         agent.serve()
     except KeyboardInterrupt:
         logger.info("Administrator agent stopped")
+
+
+def mcp_server(settings: Settings) -> None:
+    try:
+        serve(
+            settings.mcp_token.get_secret_value(),
+            settings.reservations_file,
+            settings.mcp_host,
+            settings.mcp_port,
+        )
+    except ValueError as error:
+        sys.exit(str(error))
 
 
 def ingest(settings: Settings) -> None:
@@ -147,6 +162,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("chat", help="talk to the assistant in the terminal")
     commands.add_parser("admin", help="run the administrator agent (Telegram)")
+    commands.add_parser("mcp-server", help="run the MCP server that stores confirmed reservations")
     commands.add_parser("ingest", help="(re)build the vector store from data/static")
     evaluation = commands.add_parser("evaluate", help="measure retrieval, latency and guard rails")
     evaluation.add_argument(
@@ -171,6 +187,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         chat(settings)
     elif args.command == "admin":
         admin(settings)
+    elif args.command == "mcp-server":
+        mcp_server(settings)
     elif args.command == "ingest":
         ingest(settings)
     else:

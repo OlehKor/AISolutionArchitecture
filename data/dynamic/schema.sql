@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS reservations (
     request_message_id INTEGER,
     customer_notified  INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL,
-    decided_at         TEXT
+    decided_at         TEXT,
+    archived           INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_reservations_period ON reservations (start_time, end_time);

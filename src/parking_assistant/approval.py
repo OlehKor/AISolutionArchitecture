@@ -91,9 +91,14 @@ def render_admin_help() -> str:
     )
 
 
-def render_decision_ack(reservation: Reservation) -> str:
+def render_decision_ack(reservation: Reservation, archived: bool = True) -> str:
     verb = "confirmed" if reservation.status == CONFIRMED else "rejected"
-    return f"Reservation {reservation.reference} {verb}. The customer will be told in the chat."
+    text = f"Reservation {reservation.reference} {verb}. The customer will be told in the chat."
+    if reservation.status != CONFIRMED:
+        return text
+    if archived:
+        return f"{text} It was saved to the confirmed reservations file."
+    return f"{text} The reservations file server is unavailable; I will keep retrying to save it."
 
 
 def render_already_decided(reservation: Reservation) -> str:

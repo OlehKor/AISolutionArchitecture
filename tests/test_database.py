@@ -134,3 +134,77 @@ def test_database_without_approval_columns_is_migrated(database_path, tmp_path):
     assert fresh.status == PENDING
     assert [r.reference for r in migrated.pending_reservations()] == ["PK-NEW001"]
     migrated.close()
+
+
+def test_confirmations_wait_in_the_archive_queue_until_marked_archived(database):
+    database.create_reservation(DRAFT, "PK-TEST01", NOW)
+    database.create_reservation(DRAFT, "PK-TEST02", NOW)
+    database.decide("PK-TEST01", CONFIRMED, "", NOW)
+    database.decide("PK-TEST02", REJECTED, "closed", NOW)
+
+    assert [r.reference for r in database.unarchived_confirmations()] == ["PK-TEST01"]
+
+    database.mark_archived("PK-TEST01")
+
+    assert database.unarchived_confirmations() == []
+
+
+def test_reservation_exposes_the_approval_time(database):
+    pending = database.create_reservation(DRAFT, "PK-TEST01", NOW)
+    database.decide("PK-TEST01", CONFIRMED, "", NOW)
+
+    assert pending.decided_at == ""
+    assert database.get_reservation("PK-TEST01").decided_at == "2026-10-24T10:00"
+
+
+def test_legacy_confirmed_reservations_are_not_queued_for_archiving(database_path):
+    from conftest import SCHEMA_SQL, SEED_SQL
+
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE reservations (reference TEXT PRIMARY KEY, first_name TEXT NOT NULL,"
+            " last_name TEXT NOT NULL, car_number TEXT NOT NULL, start_time TEXT NOT NULL,"
+            " end_time TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO reservations VALUES ('PK-OLD001', 'Old', 'Booking', 'ABC123',"
+            " '2026-10-25T09:00', '2026-10-25T10:00', '2026-10-24T09:00')"
+        )
+
+    migrated = ParkingDatabase.open(database_path, SCHEMA_SQL, SEED_SQL)
+
+    assert migrated.unarchived_confirmations() == []
+    migrated.close()
+
+
+def test_reservations_approved_before_archiving_existed_are_queued(database_path):
+    from conftest import SCHEMA_SQL, SEED_SQL
+
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE reservations (reference TEXT PRIMARY KEY, first_name TEXT NOT NULL,"
+            " last_name TEXT NOT NULL, car_number TEXT NOT NULL, start_time TEXT NOT NULL,"
+            " end_time TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',"
+            " admin_comment TEXT NOT NULL DEFAULT '', request_message_id INTEGER,"
+            " customer_notified INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,"
+            " decided_at TEXT)"
+        )
+        for reference, status, decided_at in (
+            ("PK-APPR01", "confirmed", "2026-10-25T10:22"),
+            ("PK-REJ001", "rejected", "2026-10-25T10:28"),
+            ("PK-WAIT01", "pending", None),
+        ):
+            connection.execute(
+                "INSERT INTO reservations (reference, first_name, last_name, car_number,"
+                " start_time, end_time, status, created_at, decided_at)"
+                " VALUES (?, 'A', 'B', 'ABC123', '2026-11-01T09:00', '2026-11-01T10:00', ?,"
+                " '2026-10-25T10:00', ?)",
+                (reference, status, decided_at),
+            )
+
+    migrated = ParkingDatabase.open(database_path, SCHEMA_SQL, SEED_SQL)
+
+    assert [r.reference for r in migrated.unarchived_confirmations()] == ["PK-APPR01"]
+    migrated.close()

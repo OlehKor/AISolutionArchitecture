@@ -8,6 +8,11 @@ from parking_assistant.administrator import (
     AdministratorAgent,
     LlmAdministratorModel,
 )
+from parking_assistant.archive import (
+    McpReservationArchive,
+    ReservationArchive,
+    UnconfiguredArchive,
+)
 from parking_assistant.assistant import Dependencies, ParkingAssistant
 from parking_assistant.config import Settings
 from parking_assistant.conversation import LlmConversationModel
@@ -55,6 +60,13 @@ def build_admin_channel(settings: Settings) -> AdminChannel:
     )
 
 
+def build_archive(settings: Settings) -> ReservationArchive:
+    token = settings.mcp_token.get_secret_value()
+    if not token:
+        return UnconfiguredArchive()
+    return McpReservationArchive(settings.mcp_url, token)
+
+
 def build_administrator(settings: Settings, database: ParkingDatabase) -> AdministratorAgent:
     return AdministratorAgent(
         model=LlmAdministratorModel(build_chat_model(settings)),
@@ -62,6 +74,7 @@ def build_administrator(settings: Settings, database: ParkingDatabase) -> Admini
         database=database,
         clock=datetime.now,
         admin_chat_id=settings.telegram_admin_chat_id,
+        archive=build_archive(settings),
     )
 
 

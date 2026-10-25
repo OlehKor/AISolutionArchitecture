@@ -37,3 +37,11 @@ def test_telegram_is_configured_only_with_token_and_chat_id():
 
 def test_bot_token_is_hidden_when_settings_are_printed():
     assert "123:abc" not in repr(Settings(telegram_bot_token=SecretStr("123:abc")))
+
+
+def test_mcp_defaults_are_local_and_the_token_is_hidden():
+    settings = Settings(mcp_token=SecretStr("super-secret-token"))
+
+    assert settings.mcp_url == "http://127.0.0.1:8765/mcp"
+    assert settings.reservations_file.name == "confirmed_reservations.txt"
+    assert "super-secret-token" not in repr(settings)

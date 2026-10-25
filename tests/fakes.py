@@ -5,6 +5,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
 
 from parking_assistant.approval import AdminDeliveryError, Decision, IncomingMessage
+from parking_assistant.archive import ArchiveError
 from parking_assistant.conversation import Route
 from parking_assistant.database import Reservation
 from parking_assistant.guardrails import Redaction
@@ -135,3 +136,16 @@ class ScriptedAdministratorModel:
     def interpret_reply(self, reservation: Reservation, reply: str) -> Decision:
         self.interpreted.append((reservation.reference, reply))
         return self._decisions.popleft()
+
+
+class RecordingArchive:
+    """Archive stand-in that records reservations, failing while `available` is False."""
+
+    def __init__(self, available: bool = True) -> None:
+        self.available = available
+        self.archived: list[Reservation] = []
+
+    def archive(self, reservation: Reservation) -> None:
+        if not self.available:
+            raise ArchiveError("server down")
+        self.archived.append(reservation)

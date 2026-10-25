@@ -12,7 +12,8 @@ REJECTED = "rejected"
 ACTIVE_STATUSES = (PENDING, CONFIRMED)
 
 RESERVATION_COLUMNS = (
-    "reference, first_name, last_name, car_number, start_time, end_time, status, admin_comment"
+    "reference, first_name, last_name, car_number, start_time, end_time, status, admin_comment,"
+    " COALESCE(decided_at, '') AS decided_at"
 )
 # Reservations stored before approval existed count as confirmed and already reported.
 LEGACY_COLUMNS = {
@@ -21,6 +22,7 @@ LEGACY_COLUMNS = {
     "request_message_id": "INTEGER",
     "customer_notified": "INTEGER NOT NULL DEFAULT 1",
     "decided_at": "TEXT",
+    "archived": "INTEGER NOT NULL DEFAULT 1",
 }
 BUSY_TIMEOUT_MS = 5000
 
@@ -65,6 +67,7 @@ class Reservation:
     end_time: str
     status: str = PENDING
     admin_comment: str = ""
+    decided_at: str = ""
 
 
 class ParkingDatabase:
@@ -184,6 +187,14 @@ class ParkingDatabase:
         ).fetchall()
         return sorted((Reservation(**dict(row)) for row in rows), key=lambda r: r.reference)
 
+    def unarchived_confirmations(self) -> list[Reservation]:
+        return self._select_reservations("status = ? AND archived = 0", (CONFIRMED,))
+
+    def mark_archived(self, reference: str) -> None:
+        self._connection.execute(
+            "UPDATE reservations SET archived = 1 WHERE reference = ?", (reference,)
+        )
+
     def mark_notified(self, references: Sequence[str]) -> None:
         self._connection.execute(
             "UPDATE reservations SET customer_notified = 1"
@@ -208,6 +219,11 @@ class ParkingDatabase:
                 self._connection.execute(
                     f"ALTER TABLE reservations ADD COLUMN {column} {definition}"
                 )
+        if "archived" not in existing:
+            self._connection.execute(
+                "UPDATE reservations SET archived = 0"
+                " WHERE status = 'confirmed' AND decided_at IS NOT NULL"
+            )
 
     def _overlapping_reservations(self, start: str, end: str) -> int:
         return self._connection.execute(

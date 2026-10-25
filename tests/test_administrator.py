@@ -3,7 +3,7 @@ from datetime import datetime
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
 
-from fakes import NOW, RecordingChannel, ScriptedAdministratorModel
+from fakes import NOW, RecordingArchive, RecordingChannel, ScriptedAdministratorModel
 from parking_assistant.administrator import AdministratorAgent, LlmAdministratorModel
 from parking_assistant.approval import AdminDeliveryError, Decision, IncomingMessage
 from parking_assistant.database import CONFIRMED, PENDING, REJECTED
@@ -29,10 +29,11 @@ def message(text: str, reply_to: int = 0, chat_id: int = ADMIN_CHAT) -> Incoming
     return IncomingMessage(chat_id=chat_id, text=text, reply_to_message_id=reply_to)
 
 
-def make_agent(database, channel=None, model=None):
+def make_agent(database, channel=None, model=None, archive=None):
     channel = channel or RecordingChannel()
     model = model or ScriptedAdministratorModel()
-    agent = AdministratorAgent(model, channel, database, lambda: NOW, ADMIN_CHAT)
+    archive = archive or RecordingArchive()
+    agent = AdministratorAgent(model, channel, database, lambda: NOW, ADMIN_CHAT, archive)
     return agent, channel, model
 
 
@@ -196,3 +197,66 @@ def test_llm_model_writes_a_note_and_parses_the_decision(database):
     assert type(note) is str
     assert note == "Short notice."
     assert decision.verdict == "approve"
+
+
+def test_approved_reservation_is_archived_with_its_approval_time(database):
+    archive = RecordingArchive()
+    agent, channel, _ = make_agent(
+        database, model=ScriptedAdministratorModel(APPROVE), archive=archive
+    )
+    submit(database, agent)
+
+    agent.handle_admin_message(message("approve"))
+
+    archived = archive.archived[0]
+    assert (archived.reference, archived.status) == ("PK-TEST01", CONFIRMED)
+    assert archived.decided_at == NOW.strftime("%Y-%m-%dT%H:%M")
+    assert database.unarchived_confirmations() == []
+    assert "saved to the confirmed reservations file" in channel.sent[-1]
+
+
+def test_rejected_reservation_is_not_archived(database):
+    archive = RecordingArchive()
+    agent, channel, _ = make_agent(
+        database, model=ScriptedAdministratorModel(REJECT), archive=archive
+    )
+    submit(database, agent)
+
+    agent.handle_admin_message(message("no"))
+
+    assert archive.archived == []
+    assert "saved" not in channel.sent[-1]
+
+
+def test_confirmation_survives_an_unavailable_archive_and_is_retried(database):
+    archive = RecordingArchive(available=False)
+    agent, channel, _ = make_agent(
+        database, model=ScriptedAdministratorModel(APPROVE), archive=archive
+    )
+    submit(database, agent)
+
+    agent.handle_admin_message(message("approve"))
+
+    assert database.get_reservation("PK-TEST01").status == CONFIRMED
+    assert [r.reference for r in database.unarchived_confirmations()] == ["PK-TEST01"]
+    assert "keep retrying" in channel.sent[-1]
+    assert agent.retry_archiving() == 0
+
+    archive.available = True
+
+    assert agent.retry_archiving() == 1
+    assert database.unarchived_confirmations() == []
+    assert agent.retry_archiving() == 0
+
+
+def test_serve_retries_archiving_before_every_poll(database):
+    archive = RecordingArchive(available=False)
+    channel = RecordingChannel([[], []])
+    agent, channel, _ = make_agent(database, channel, ScriptedAdministratorModel(APPROVE), archive)
+    submit(database, agent)
+    agent.handle_admin_message(message("approve"))
+    archive.available = True
+
+    agent.serve(should_stop=lambda: not channel._incoming, pause=lambda seconds: None)
+
+    assert len(archive.archived) == 1

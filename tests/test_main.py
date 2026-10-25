@@ -165,3 +165,24 @@ def test_watcher_survives_a_failed_check():
     cli.announce_decisions(assistant, "s1", ClosableDatabase, stop, interval=0)
 
     assert assistant.calls == 2
+
+
+def test_cli_parses_the_mcp_server_command():
+    assert cli.parse_args(["mcp-server"]).command == "mcp-server"
+
+
+def test_mcp_server_command_refuses_a_missing_token():
+    with pytest.raises(SystemExit) as stopped:
+        cli.mcp_server(Settings(mcp_token=SecretStr("")))
+
+    assert "at least" in str(stopped.value)
+
+
+def test_mcp_server_command_serves_with_the_configured_settings(monkeypatch):
+    started: list[tuple] = []
+    monkeypatch.setattr(cli, "serve", lambda *args: started.append(args))
+    settings = Settings(mcp_token=SecretStr("x" * 32), mcp_port=9999)
+
+    cli.mcp_server(settings)
+
+    assert started == [("x" * 32, settings.reservations_file, "127.0.0.1", 9999)]

@@ -38,10 +38,19 @@ class Settings(BaseSettings):
     telegram_admin_chat_id: int = 0
     telegram_poll_seconds: int = 30
 
+    mcp_host: str = "127.0.0.1"
+    mcp_port: int = 8765
+    mcp_token: SecretStr = SecretStr("")
+    reservations_file: Path = PROJECT_ROOT / "var" / "confirmed_reservations.txt"
+
     public_contacts: tuple[str, ...] = Field(
         default=("+370 5 210 4455", "info@skypark-central.com"),
         description="Contact details that are allowed to appear in answers.",
     )
+
+    @property
+    def mcp_url(self) -> str:
+        return f"http://{self.mcp_host}:{self.mcp_port}/mcp"
 
     @property
     def telegram_token_set(self) -> bool:
